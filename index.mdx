@@ -1,97 +1,105 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "Pulse — Network Logger for Apple Platforms"
+description: "Capture, inspect, and debug network requests and logs directly from your iOS, macOS, tvOS, watchOS, or visionOS app."
 ---
 
-## Setting up
+Pulse is a powerful logging and network debugging framework for Apple platforms. It captures `URLSession` traffic, stores logs persistently on-device, and provides a native SwiftUI console you can embed directly in your app — no proxy, no external tooling required.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get Pulse integrated into your app in minutes with a working code example.
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Installation" icon="download" href="/installation">
+    Add Pulse via Swift Package Manager or CocoaPods.
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Network Logging" icon="network-wired" href="/network-logging/capturing-requests">
+    Capture URLSession traffic with URLSessionProxy, URLSessionProxyDelegate, or PulseProxy.
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Console UI" icon="terminal" href="/console/integrating-console">
+    Embed the built-in SwiftUI console into your app for on-device log inspection.
   </Card>
-</Columns>
+  <Card title="Remote Logging" icon="broadcast-tower" href="/console/remote-logging">
+    Stream logs in real time to the Pulse Pro app on macOS or iOS over your local network.
+  </Card>
+  <Card title="API Reference" icon="code" href="/api/logger-store">
+    Full reference for LoggerStore, NetworkLogger, RemoteLogger, and more.
+  </Card>
+</CardGroup>
 
-## Create beautiful pages
+## How it works
 
-Everything you need to create world-class documentation.
+<Steps>
+  <Step title="Add the Pulse package">
+    Add `Pulse` and `PulseUI` libraries to your app via Swift Package Manager:
+    ```
+    https://github.com/kean/Pulse
+    ```
+  </Step>
+  <Step title="Capture network traffic">
+    Replace `URLSession` with `URLSessionProxy` to automatically capture all network requests:
+    ```swift
+    import Pulse
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
-  </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
-  </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
-  </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
-  </Card>
-</Columns>
+    #if DEBUG
+    let session: URLSessionProtocol = URLSessionProxy(configuration: .default)
+    #else
+    let session: URLSessionProtocol = URLSession(configuration: .default)
+    #endif
+    ```
+  </Step>
+  <Step title="Embed the console">
+    Add `ConsoleView` to your app so your team can inspect logs on-device:
+    ```swift
+    import PulseUI
 
-## Need inspiration?
+    NavigationLink(destination: ConsoleView()) {
+        Text("Console")
+    }
+    ```
+  </Step>
+  <Step title="Connect Pulse Pro (optional)">
+    Enable real-time remote logging to stream logs directly to the Pulse Pro app:
+    ```swift
+    #if DEBUG
+    RemoteLogger.shared.isAutomaticConnectionEnabled = true
+    #endif
+    ```
+  </Step>
+</Steps>
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Automatic capture" icon="eye">
+    URLSessionProxy and PulseProxy capture all network traffic with minimal integration effort.
+  </Card>
+  <Card title="On-device console" icon="mobile">
+    The SwiftUI ConsoleView lets you and your QA team inspect logs without leaving the app.
+  </Card>
+  <Card title="Remote debugging" icon="wifi">
+    Connect to Pulse Pro over your local network to view logs in real time on macOS or iOS.
+  </Card>
+  <Card title="Privacy-first" icon="shield">
+    Logs are stored locally and never leave your device. Sensitive fields can be redacted automatically.
+  </Card>
+  <Card title="Response mocking" icon="flask">
+    Mock API responses directly from Pulse Pro for faster debugging and testing.
+  </Card>
+  <Card title="SwiftLog compatible" icon="plug">
+    Use Pulse as a SwiftLog backend via the PulseLogHandler package.
+  </Card>
+</CardGroup>
+
+## Supported platforms
+
+| Platform | Minimum version |
+|----------|----------------|
+| iOS      | 15.0           |
+| tvOS     | 15.0           |
+| macOS    | 13.0           |
+| watchOS  | 9.0            |
+| visionOS | 1.0            |
+
+<Note>
+  Pulse is **not** a network proxy. It operates on the `URLSession` level within your app. If you need a full proxy solution, check out [Proxyman](https://proxyman.io).
+</Note>

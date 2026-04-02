@@ -1,0 +1,144 @@
+---
+title: "SwiftLog Integration"
+description: "Use Pulse as a SwiftLog backend to route all swift-log output into LoggerStore."
+---
+
+Pulse can serve as a backend for [swift-log](https://github.com/apple/swift-log), Apple's standard logging API for Swift. Once bootstrapped, every `Logger` call made anywhere in your app — including from third-party libraries that use swift-log — is automatically persisted in `LoggerStore` and visible in the Pulse console.
+
+## Package
+
+The SwiftLog integration is provided by a separate package:
+
+**[github.com/kean/PulseLogHandler](https://github.com/kean/PulseLogHandler)**
+
+Add it to your `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/kean/PulseLogHandler.git", from: "3.0.0"),
+],
+targets: [
+    .target(name: "YourApp", dependencies: [
+        "PulseLogHandler",
+    ]),
+]
+```
+
+Or add it via **Xcode → File → Add Package Dependencies**.
+
+---
+
+## Bootstrapping
+
+Call `LoggingSystem.bootstrap` once at app startup, before any logging takes place.
+
+```swift
+import Logging
+import PulseLogHandler
+
+@main
+struct MyApp: App {
+    init() {
+        LoggingSystem.bootstrap(PersistentLogHandler.init)
+    }
+
+    var body: some Scene {
+        WindowGroup { ContentView() }
+    }
+}
+```
+
+After bootstrap, all swift-log `Logger` calls are routed to Pulse:
+
+```swift
+import Logging
+
+let logger = Logger(label: "com.myapp.network")
+
+logger.info("Request started", metadata: ["url": "\(request.url!)"])
+logger.error("Request failed", metadata: ["error": "\(error)"])
+```
+
+---
+
+## How It Works
+
+`PersistentLogHandler` implements the `LogHandler` protocol from swift-log. Internally it calls `LoggerStore.shared.storeMessage(label:level:message:metadata:)` for every log entry.
+
+| swift-log concept    | Pulse equivalent                   |
+|----------------------|------------------------------------|
+| `Logger.label`       | `LoggerMessageEntity.label`        |
+| `Logger.Level`       | `LoggerStore.Level` (same values)  |
+| `Logger.Message`     | `LoggerMessageEntity.text`         |
+| `Logger.Metadata`    | `LoggerMessageEntity.metadata`     |
+
+<Note>
+`LoggerStore.Level` is intentionally compatible with `swift-log`'s `Logger.Level`. The levels map 1-to-1: `trace`, `debug`, `info`, `notice`, `warning`, `error`, `critical`.
+</Note>
+
+---
+
+## Metadata
+
+swift-log metadata is stored as Pulse message metadata and is visible in the message detail view.
+
+```swift
+var logger = Logger(label: "auth")
+logger[metadataKey: "userID"] = "u-1234"
+logger[metadataKey: "requestID"] = "\(UUID())"
+
+logger.info("Token refreshed")
+// Stored with metadata: { "userID": "u-1234", "requestID": "..." }
+```
+
+Both string literals and `CustomStringConvertible` values are supported through `LoggerStore.MetadataValue`.
+
+---
+
+## Using Both APIs Together
+
+You can mix SwiftLog calls and direct `LoggerStore` calls freely. Both write to the same store.
+
+```swift
+// Via swift-log (PersistentLogHandler)
+logger.debug("Cache hit", metadata: ["key": "\(cacheKey)"])
+
+// Via Pulse directly
+LoggerStore.shared.storeMessage(
+    label: "cache",
+    level: .debug,
+    message: "Cache hit",
+    metadata: ["key": .string(cacheKey)]
+)
+```
+
+<Tip>
+Use swift-log for application-level code so third-party libraries that also use swift-log automatically flow into Pulse. Use direct `LoggerStore` calls when you need fine-grained control over metadata types or want to avoid importing `Logging` in lower-level modules.
+</Tip>
+
+---
+
+## Using a Custom Store
+
+By default `PersistentLogHandler` writes to `LoggerStore.shared`. To use a different store, pass a factory closure to `bootstrap`:
+
+```swift
+let customStore = try LoggerStore(storeURL: myURL, options: [.create, .sweep])
+
+LoggingSystem.bootstrap { label in
+    PersistentLogHandler(label: label, store: customStore)
+}
+```
+
+---
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="PulseLogHandler on GitHub" icon="github" href="https://github.com/kean/PulseLogHandler">
+    Source code and releases for the SwiftLog backend package.
+  </Card>
+  <Card title="swift-log on GitHub" icon="github" href="https://github.com/apple/swift-log">
+    Apple's standard logging API for server-side and cross-platform Swift.
+  </Card>
+</CardGroup>

@@ -1,0 +1,95 @@
+---
+title: "Installation"
+description: "Add Pulse to your Xcode project via Swift Package Manager, CocoaPods, or precompiled binary frameworks."
+---
+
+## Minimum requirements
+
+| Pulse | Swift | Xcode | iOS | tvOS | macOS | watchOS | visionOS |
+|---|---|---|---|---|---|---|---|
+| 5.x | 5.10 | 15.4 | 15+ | 15+ | 13+ | 9+ | 1+ |
+| 4.x | 5.7 | 14.1 | 14+ | 15+ | 12+ | 8+ | — |
+
+## Modules
+
+Choose the libraries that match your needs:
+
+| Module | Purpose | Production safe |
+|---|---|---|
+| **Pulse** | Core storage, network capture, remote logging | Yes |
+| **PulseUI** | SwiftUI views (`ConsoleView`) for on-device log inspection | Yes (add to debug builds) |
+| **PulseProxy** | Automatic capture via swizzling — no code changes needed | **No. Debug builds only.** |
+
+## Swift Package Manager
+
+<Steps>
+  <Step title="Open your project in Xcode">
+    Go to **File → Add Package Dependencies**.
+  </Step>
+  <Step title="Enter the package URL">
+    Paste the following URL into the search field:
+
+    ```
+    https://github.com/kean/Pulse
+    ```
+  </Step>
+  <Step title="Choose the libraries to add">
+    Select the libraries for your app target:
+
+    - **Pulse** — always required
+    - **PulseUI** — add to your app target (recommended for debug builds)
+    - **PulseProxy** — optional; add only to a debug scheme or target
+
+    Click **Add Package**.
+  </Step>
+</Steps>
+
+You can also add Pulse as a dependency in your own `Package.swift`:
+
+```swift
+dependencies: [
+    .package(url: "https://github.com/kean/Pulse", from: "5.0.0")
+],
+targets: [
+    .target(
+        name: "MyApp",
+        dependencies: [
+            .product(name: "Pulse", package: "Pulse"),
+            .product(name: "PulseUI", package: "Pulse"),
+        ]
+    )
+]
+```
+
+<Warning>
+  If you add **PulseProxy**, make sure it is only linked to a debug target or scheme. It uses swizzling and private APIs that are not suitable for App Store submissions.
+</Warning>
+
+## CocoaPods
+
+Add the pods you need to your `Podfile`:
+
+```ruby
+pod 'PulseCore'   # core module (installs as 'Pulse')
+pod 'PulseUI'     # SwiftUI console views
+```
+
+Then run:
+
+```bash
+pod install
+```
+
+<Note>
+  The CocoaPods pod is named `PulseCore` but the module you import in Swift is `Pulse`. PulseProxy is not available via CocoaPods — use Swift Package Manager to include it in a debug target.
+</Note>
+
+## Precompiled binaries
+
+Precompiled `.xcframework` binaries are attached to every [GitHub release](https://github.com/kean/Pulse/releases). Download them from the latest release and drag them into your Xcode project manually.
+
+This is useful if you cannot use Swift Package Manager or CocoaPods, or if you want to pin to a specific build without a package manager.
+
+## Next steps
+
+Once Pulse is installed, follow the [Quick start](/quickstart) guide to capture your first network requests and open the on-device console.

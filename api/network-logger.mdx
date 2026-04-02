@@ -1,0 +1,315 @@
+---
+title: "NetworkLogger"
+description: "A wrapper on top of LoggerStore that simplifies logging of network requests."
+---
+
+```swift
+public final class NetworkLogger: @unchecked Sendable
+```
+
+`NetworkLogger` sits between your `URLSession` delegate and `LoggerStore`. It manages per-task context (accumulated response data, metrics), applies host/URL include-exclude filters, redacts sensitive headers and query items, and forwards fully-formed `LoggerStore.Event` values to the store.
+
+It is used internally by `URLSessionProxyDelegate` and is generally not called directly unless you are implementing custom `URLSession` delegate forwarding.
+
+## Shared Instance
+
+<ResponseField name="shared" type="static var NetworkLogger">
+  The shared network logger. Replace it at app launch to apply custom configuration.
+
+  ```swift
+  NetworkLogger.shared = NetworkLogger {
+      $0.excludedHosts = ["analytics.example.com"]
+      $0.sensitiveHeaders = ["Authorization", "X-API-Key"]
+  }
+  ```
+</ResponseField>
+
+## Initializers
+
+```swift
+public init(store: LoggerStore? = nil, configuration: Configuration = .init())
+```
+
+<ParamField path="store" type="LoggerStore?">
+  The target store. Defaults to `LoggerStore.shared` when `nil`.
+</ParamField>
+
+<ParamField path="configuration" type="Configuration">
+  Logger configuration. Defaults to `Configuration()`.
+</ParamField>
+
+---
+
+```swift
+public convenience init(store: LoggerStore? = nil, _ configure: (inout Configuration) -> Void)
+```
+
+Convenience initialiser that accepts a configuration closure.
+
+```swift
+let logger = NetworkLogger {
+    $0.includedHosts = ["api.example.com"]
+    $0.sensitiveQueryItems = ["token", "api_key"]
+}
+```
+
+---
+
+## Logging Methods
+
+These methods map directly to `URLSessionDelegate` and `URLSessionDataDelegate` callbacks. Wire them up inside your delegate implementation or use `URLSessionProxyDelegate` to do it automatically.
+
+### logTaskCreated
+
+```swift
+public func logTaskCreated(_ task: URLSessionTask)
+```
+
+Records the creation of a new task. Call this from `urlSession(_:didCreateTask:)`. Optional — if omitted, the task is registered on first progress or completion event.
+
+<ParamField path="task" type="URLSessionTask" required>
+  The newly created session task.
+</ParamField>
+
+---
+
+### logDataTask(_:didReceive:)
+
+```swift
+public func logDataTask(_ dataTask: URLSessionDataTask, didReceive data: Data)
+```
+
+Appends a received data chunk to the task's internal accumulation buffer. Call this from `urlSession(_:dataTask:didReceive:)`.
+
+<ParamField path="dataTask" type="URLSessionDataTask" required>
+  The data task that received the chunk.
+</ParamField>
+
+<ParamField path="data" type="Data" required>
+  The data chunk received in this callback.
+</ParamField>
+
+---
+
+### logTask(_:didCompleteWithError:)
+
+```swift
+public func logTask(_ task: URLSessionTask, didCompleteWithError error: Error?)
+```
+
+Records the final completion of a task and flushes it to the store. Call this from `urlSession(_:task:didCompleteWithError:)`.
+
+If `configuration.isWaitingForDecoding` is `true` and `error` is `nil`, the task is not flushed yet — wait for `logTask(_:didFinishDecodingWithError:)` instead.
+
+<ParamField path="task" type="URLSessionTask" required>
+  The completed task.
+</ParamField>
+
+<ParamField path="error" type="Error?">
+  Transport-level error, or `nil` on success.
+</ParamField>
+
+---
+
+### logTask(_:didFinishCollecting:)
+
+```swift
+public func logTask(_ task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics)
+```
+
+Stores timing metrics for the task. Call from `urlSession(_:task:didFinishCollecting:)`.
+
+<ParamField path="task" type="URLSessionTask" required>
+  The task whose metrics were collected.
+</ParamField>
+
+<ParamField path="metrics" type="URLSessionTaskMetrics" required>
+  The metrics object provided by `URLSession`.
+</ParamField>
+
+---
+
+### logTask(_:didFinishDecodingWithError:)
+
+```swift
+public func logTask(_ task: URLSessionTask, didFinishDecodingWithError error: Error?)
+```
+
+Marks the task as complete after model decoding finishes. Only relevant when `configuration.isWaitingForDecoding` is `true`. Call this after your `Decodable` parsing step.
+
+<ParamField path="task" type="URLSessionTask" required>
+  The task whose decoded result is now available.
+</ParamField>
+
+<ParamField path="error" type="Error?">
+  Decoding error (e.g. `DecodingError`), or `nil` on success.
+</ParamField>
+
+---
+
+## Configuration
+
+```swift
+public struct Configuration: Sendable
+```
+
+<ResponseField name="label" type="String?">
+  A custom label attached to every message logged by this instance. Useful for distinguishing logs from multiple `NetworkLogger` instances (e.g. `"auth-session"` vs `"api-session"`). Defaults to `nil`.
+</ResponseField>
+
+<ResponseField name="isWaitingForDecoding" type="Bool">
+  When `true`, tasks are not marked as completed until `logTask(_:didFinishDecodingWithError:)` is called. This allows Pulse to capture model-level decoding errors. Defaults to `false`.
+
+  ```swift
+  var config = NetworkLogger.Configuration()
+  config.isWaitingForDecoding = true
+  ```
+</ResponseField>
+
+<ResponseField name="includedHosts" type="Set<String>">
+  Only log requests whose host matches one of these patterns. When empty (default), all hosts pass. Supports wildcard syntax (`*.example.com`) and full regex when `isRegexEnabled` is `true`.
+</ResponseField>
+
+<ResponseField name="includedURLs" type="Set<String>">
+  Only log requests whose absolute URL matches one of these patterns. Applied in addition to `includedHosts`. Supports wildcards and regex.
+</ResponseField>
+
+<ResponseField name="excludedHosts" type="Set<String>">
+  Suppress logs for requests to these hosts. Takes precedence over `includedHosts`. Supports wildcards and regex.
+</ResponseField>
+
+<ResponseField name="excludedURLs" type="Set<String>">
+  Suppress logs for requests whose absolute URL matches these patterns. Supports wildcards and regex.
+</ResponseField>
+
+<ResponseField name="sensitiveHeaders" type="Set<String>">
+  Replace the values of these HTTP headers with `"<private>"` in both request and response logs. Supports wildcards (e.g. `X-*`) and regex when `isRegexEnabled` is `true`. Matching is case-insensitive.
+
+  ```swift
+  $0.sensitiveHeaders = ["Authorization", "Cookie", "X-API-Key"]
+  ```
+</ResponseField>
+
+<ResponseField name="sensitiveQueryItems" type="Set<String>">
+  Replace the values of these URL query parameters with `"private"`. Case-sensitive, plain strings only (no wildcard support).
+
+  ```swift
+  $0.sensitiveQueryItems = ["token", "api_key", "access_token"]
+  ```
+</ResponseField>
+
+<ResponseField name="sensitiveDataFields" type="Set<String>">
+  Recursively redact matching JSON keys in logged request and response bodies, replacing their values with `"<private>"`. Applies to both objects and arrays. Case-sensitive, plain strings only.
+
+  ```swift
+  $0.sensitiveDataFields = ["password", "ssn", "credit_card"]
+  ```
+</ResponseField>
+
+<ResponseField name="isRegexEnabled" type="Bool">
+  When `true`, the patterns in `includedHosts`, `excludedHosts`, `includedURLs`, `excludedURLs`, and `sensitiveHeaders` are treated as full regular expressions. Defaults to `false` (wildcard `*` and `?` syntax only).
+</ResponseField>
+
+<ResponseField name="willHandleEvent" type="@Sendable (LoggerStore.Event) -> LoggerStore.Event?">
+  Event pre-processing hook. Called after built-in filtering and redaction. Return the event (modified or unmodified) to forward it to the store, or return `nil` to drop it entirely.
+
+  ```swift
+  $0.willHandleEvent = { event in
+      // Suppress specific endpoint
+      if case .networkTaskCreated(let e) = event,
+         e.originalRequest.url?.path == "/health" {
+          return nil
+      }
+      return event
+  }
+  ```
+</ResponseField>
+
+---
+
+## Entity Types
+
+The following value types are used throughout `NetworkLogger` events and stored entities.
+
+### NetworkLogger.Request
+
+```swift
+public struct Request: Hashable, Codable, Sendable
+```
+
+A serialisable snapshot of a `URLRequest`.
+
+<ResponseField name="url" type="URL?">Request URL.</ResponseField>
+<ResponseField name="httpMethod" type="String?">HTTP method (e.g. `"GET"`, `"POST"`).</ResponseField>
+<ResponseField name="headers" type="[String: String]?">HTTP request headers.</ResponseField>
+<ResponseField name="cachePolicy" type="URLRequest.CachePolicy">Cache policy decoded from the raw stored value.</ResponseField>
+<ResponseField name="timeout" type="TimeInterval">Request timeout interval in seconds.</ResponseField>
+<ResponseField name="options" type="Request.Options">Network access option flags (cellular, expensive, constrained, cookies, pipelining).</ResponseField>
+
+---
+
+### NetworkLogger.Response
+
+```swift
+public struct Response: Hashable, Codable, Sendable
+```
+
+A serialisable snapshot of a `URLResponse`.
+
+<ResponseField name="statusCode" type="Int?">HTTP status code, or `nil` for non-HTTP responses.</ResponseField>
+<ResponseField name="headers" type="[String: String]?">HTTP response headers.</ResponseField>
+<ResponseField name="contentType" type="ContentType?">Parsed `Content-Type` header value.</ResponseField>
+
+---
+
+### NetworkLogger.Metrics
+
+```swift
+public struct Metrics: Codable, Sendable
+```
+
+A serialisable snapshot of `URLSessionTaskMetrics`.
+
+<ResponseField name="taskInterval" type="DateInterval">Total time interval from task start to task completion.</ResponseField>
+<ResponseField name="redirectCount" type="Int">Number of redirects followed.</ResponseField>
+<ResponseField name="transactions" type="[TransactionMetrics]">Per-connection transaction timing and transfer-size details.</ResponseField>
+
+---
+
+### NetworkLogger.TaskType
+
+```swift
+@frozen public enum TaskType: Int16, Codable, CaseIterable, Sendable
+```
+
+The kind of `URLSessionTask` that was logged.
+
+<ResponseField name=".dataTask" type="TaskType">Standard data request (`URLSessionDataTask`).</ResponseField>
+<ResponseField name=".downloadTask" type="TaskType">Background download (`URLSessionDownloadTask`).</ResponseField>
+<ResponseField name=".uploadTask" type="TaskType">File or data upload (`URLSessionUploadTask`).</ResponseField>
+<ResponseField name=".streamTask" type="TaskType">TCP stream (`URLSessionStreamTask`).</ResponseField>
+<ResponseField name=".webSocketTask" type="TaskType">WebSocket connection (`URLSessionWebSocketTask`).</ResponseField>
+
+---
+
+## Usage Example
+
+```swift
+// In your URLSessionDelegate
+
+func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+    NetworkLogger.shared.logDataTask(dataTask, didReceive: data)
+}
+
+func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+    NetworkLogger.shared.logTask(task, didCompleteWithError: error)
+}
+
+func urlSession(_ session: URLSession, task: URLSessionTask, didFinishCollecting metrics: URLSessionTaskMetrics) {
+    NetworkLogger.shared.logTask(task, didFinishCollecting: metrics)
+}
+```
+
+<Note>
+  For most use cases, wrapping your `URLSession` with `URLSessionProxyDelegate` is simpler than manually forwarding delegate calls to `NetworkLogger`.
+</Note>

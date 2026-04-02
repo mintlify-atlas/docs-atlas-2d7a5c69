@@ -1,0 +1,260 @@
+---
+title: "RemoteLogger"
+description: "Connects to the Pulse Pro app and streams logs in real time over the local network."
+---
+
+```swift
+@MainActor public final class RemoteLogger: ObservableObject
+```
+
+`RemoteLogger` discovers Pulse Pro instances on the local network using Bonjour (`_pulse._tcp`), establishes a TLS-secured or plain TCP connection, and streams `LoggerStore.Event` values to the remote viewer in real time.
+
+It observes `LoggerStore.events` and buffers events that arrive before a connection is established (up to 3 seconds after initialisation) so no data is lost at app launch.
+
+## Shared Instance
+
+<ResponseField name="shared" type="static let RemoteLogger">
+  The process-wide shared instance. It is automatically initialised with `LoggerStore.shared` when the shared store is first accessed.
+</ResponseField>
+
+## Properties
+
+<ResponseField name="store" type="LoggerStore?">
+  The `LoggerStore` that is currently being synced with the remote server. Set by `initialize(store:)`. Only one store can be synced at a time.
+</ResponseField>
+
+<ResponseField name="isEnabled" type="@AppStorage Bool">
+  Whether remote logging is currently enabled. Persisted to `UserDefaults` across launches. Use `enable()` / `disable()` to change this value.
+</ResponseField>
+
+<ResponseField name="browserState" type="@Published NWBrowser.State">
+  Current state of the Bonjour browser (`setup`, `ready`, `waiting`, `failed`, `cancelled`). Published — observe in SwiftUI or Combine.
+</ResponseField>
+
+<ResponseField name="browserError" type="@Published NWError?">
+  The most recent browser error, if the browser is in a `.waiting` or `.failed` state.
+</ResponseField>
+
+<ResponseField name="servers" type="@Published Set<NWBrowser.Result>">
+  The set of Pulse Pro servers currently visible on the local network. Each result's display name is available via `server.name` (see [Getting a Server Name](#getting-a-server-name)).
+</ResponseField>
+
+<ResponseField name="knownServers" type="@Published [String]">
+  Names of servers that have been successfully connected to in the past. The logger automatically connects to the first entry in this list that is currently visible in `servers`.
+</ResponseField>
+
+<ResponseField name="selectedServerName" type="@Published String?">
+  The name of the server that is currently selected (connecting or connected), or `nil` when disconnected.
+</ResponseField>
+
+<ResponseField name="connectionState" type="@Published ConnectionState">
+  The current connection state. See [ConnectionState](#connectionstate).
+</ResponseField>
+
+<ResponseField name="isAutomaticConnectionEnabled" type="Bool">
+  When set to `true`, the logger connects to the first available Pulse Pro server it discovers and remembers it for future runs. Setting this to `true` also calls `enable()`.
+
+  <Warning>
+    Do not enable automatic connection in production builds. Service discovery uses Bluetooth, which triggers a system permission prompt on first launch.
+  </Warning>
+</ResponseField>
+
+## ConnectionState
+
+```swift
+@frozen public enum ConnectionState
+```
+
+<ResponseField name=".disconnected" type="ConnectionState">
+  No active connection. The logger may be browsing for servers, retrying a failed connection, or idle.
+</ResponseField>
+
+<ResponseField name=".connecting" type="ConnectionState">
+  A connection to a server has been initiated and a handshake is in progress.
+</ResponseField>
+
+<ResponseField name=".connected" type="ConnectionState">
+  The handshake with the Pulse Pro server completed successfully. Log events are being streamed in real time.
+</ResponseField>
+
+## Methods
+
+### initialize
+
+```swift
+public func initialize(store: LoggerStore = .shared)
+```
+
+Associates a `LoggerStore` with the remote logger. Called automatically when `LoggerStore.shared` is set. Call this explicitly only if you want to use a custom store.
+
+<ParamField path="store" type="LoggerStore">
+  The store to stream. Defaults to `LoggerStore.shared`.
+</ParamField>
+
+---
+
+### enable
+
+```swift
+public func enable()
+```
+
+Starts Bonjour browsing and enables remote logging. The `isEnabled` flag is persisted to `UserDefaults` so the setting survives app restarts.
+
+```swift
+// Enable at app launch
+RemoteLogger.shared.enable()
+```
+
+---
+
+### disable
+
+```swift
+public func disable()
+```
+
+Stops Bonjour browsing, closes the current connection, and sets `isEnabled` to `false`. The preference is persisted.
+
+---
+
+### connect
+
+```swift
+public func connect(
+    to server: NWBrowser.Result,
+    passcode: String? = nil,
+    _ completion: ((Result<Void, ConnectionError>) -> Void)? = nil
+)
+```
+
+Connects to a specific discovered server. Use this when you want to let the user manually select a server from the `servers` list.
+
+<ParamField path="server" type="NWBrowser.Result" required>
+  A server result from the `servers` published property.
+</ParamField>
+
+<ParamField path="passcode" type="String?">
+  The passcode configured in Pulse Pro, if the server is password-protected. Passcodes are stored in the system keychain after a successful connection.
+</ParamField>
+
+<ParamField path="completion" type="((Result<Void, ConnectionError>) -> Void)?">
+  Optional callback invoked when the connection succeeds or fails (5-second timeout). Runs on the main queue.
+</ParamField>
+
+```swift
+// Present a server picker to the user
+let servers = Array(RemoteLogger.shared.servers)
+if let server = servers.first {
+    RemoteLogger.shared.connect(to: server) { result in
+        switch result {
+        case .success:
+            print("Connected to \(server.name ?? "server")")
+        case .failure(let error):
+            print("Connection failed: \(error.localizedDescription)")
+        }
+    }
+}
+```
+
+---
+
+### disconnect
+
+```swift
+public func disconnect()
+```
+
+Closes the current connection and sets `connectionState` to `.disconnected`. Does not stop Bonjour browsing — the logger will automatically retry when a known server reappears.
+
+---
+
+### isSelected
+
+```swift
+public func isSelected(_ server: NWBrowser.Result) -> Bool
+```
+
+Returns `true` if the given server is the currently selected (connecting or connected) server.
+
+---
+
+### forgetServer
+
+```swift
+public func forgetServer(named name: String)
+```
+
+Removes the server from `knownServers`, deletes its stored passcode from the keychain, and disconnects if it is currently connected.
+
+<ParamField path="name" type="String" required>
+  The server name to forget (as returned by `server.name`).
+</ParamField>
+
+---
+
+### getPasscode / setPasscode
+
+```swift
+public func getPasscode(forServerNamed name: String) -> String?
+public func setPasscode(_ passcode: String?, forServerNamed name: String)
+```
+
+Read and write the passcode for a named server in the system keychain. Pass `nil` to `setPasscode` to delete the stored entry.
+
+---
+
+## Getting a Server Name
+
+`NWBrowser.Result` does not expose a `name` property in the public API, but Pulse adds a private extension that extracts the Bonjour service name from the endpoint. Use `server.name` (available via the extension) for display purposes:
+
+```swift
+ForEach(Array(RemoteLogger.shared.servers), id: \.hashValue) { server in
+    Button(server.name ?? "Unknown Server") {
+        RemoteLogger.shared.connect(to: server)
+    }
+}
+```
+
+---
+
+## Usage Example
+
+```swift
+@main
+struct MyApp: App {
+    init() {
+        // Enable remote logging for debug builds
+        #if DEBUG
+        RemoteLogger.shared.enable()
+        #endif
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+```
+
+```swift
+// SwiftUI view showing connection status
+struct RemoteLoggerStatusView: View {
+    @ObservedObject var logger = RemoteLogger.shared
+
+    var body: some View {
+        HStack {
+            Circle()
+                .fill(logger.connectionState == .connected ? .green : .gray)
+                .frame(width: 8, height: 8)
+            Text(logger.selectedServerName ?? "Not connected")
+                .font(.caption)
+        }
+    }
+}
+```
+
+<Note>
+  `RemoteLogger` is annotated `@MainActor`. All property access and method calls must happen on the main thread. When integrating with Combine, use `.receive(on: DispatchQueue.main)` before accessing published properties.
+</Note>

@@ -1,0 +1,316 @@
+---
+title: "LoggerStore"
+description: "The central persistent store for logs and network requests in Pulse."
+---
+
+`LoggerStore` is the heart of Pulse. It persists log messages and network requests using Core Data with [lzfse](https://developer.apple.com/documentation/compression/algorithm/lzfse) compression, automatically manages disk space, and provides full access to the underlying data for custom views and integrations.
+
+## Shared Store
+
+`LoggerStore.shared` is the default singleton store used throughout Pulse. It is created automatically on first access and stored at `<app-logs>/current.pulse`.
+
+```swift
+// Access the shared store
+let store = LoggerStore.shared
+```
+
+You can replace the shared store with a custom one. When you do, it is automatically registered as the default store for `RemoteLogger` as well.
+
+```swift
+let customURL = FileManager.default
+    .urls(for: .documentDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("MyApp.pulse")
+
+LoggerStore.shared = try LoggerStore(
+    storeURL: customURL,
+    options: [.create, .sweep]
+)
+```
+
+<Warning>
+Replace the shared store at app launch before any logs are written. The `configuration` property is also not thread-safe and must be set early.
+</Warning>
+
+---
+
+## Initialization Options
+
+Pass an `OptionSet` of `LoggerStore.Options` when creating a store.
+
+<ParamField path="create" type="Options">
+  Creates the store package directory if it does not already exist. Intermediate directories must already be present.
+</ParamField>
+
+<ParamField path="sweep" type="Options">
+  Automatically reduces store size when it approaches the size limit by removing the oldest messages and blobs. The default shared store uses this option.
+</ParamField>
+
+<ParamField path="readonly" type="Options">
+  Opens an existing store in read-only mode. Sweeps and all other write operations are disabled.
+</ParamField>
+
+<ParamField path="inMemory" type="Options">
+  Writes nothing to disk. The `storeURL` parameter is still required but can point to anything (including `/dev/null`). Useful for unit tests or when you want to prevent persistent logging.
+</ParamField>
+
+<ParamField path="synchronous" type="Options">
+  Flushes every write to disk immediately and synchronously instead of using the default coalesced save interval. Not recommended for production use — it degrades write performance significantly.
+</ParamField>
+
+```swift
+// Read-only archive viewer
+let archiveStore = try LoggerStore(storeURL: archiveURL, options: .readonly)
+
+// Ephemeral in-memory store for tests
+let testStore = try LoggerStore(storeURL: URL(fileURLWithPath: "/dev/null"), options: [.inMemory])
+```
+
+---
+
+## Configuration
+
+`LoggerStore.Configuration` controls how the store manages data. Set properties before the first log is written.
+
+```swift
+// Increase the store size limit to 512 MB
+LoggerStore.shared.configuration.sizeLimit = 512 * 1_000_000
+```
+
+<ParamField path="sizeLimit" type="Int64" default="256 MB">
+  Approximate maximum size of the store in bytes, covering both the database and externally stored blobs. When the limit is reached and `.sweep` is enabled, older messages are removed.
+</ParamField>
+
+<ParamField path="saveInterval" type="DispatchTimeInterval" default=".milliseconds(300)">
+  How often pending writes are flushed to the database. The default of 300 ms balances write efficiency against data loss on crash.
+</ParamField>
+
+<ParamField path="isStoringOnlyImageThumbnails" type="Bool" default="true">
+  When `true`, image responses larger than 15 KB are downscaled to a thumbnail (512 px by default) before being stored. This dramatically reduces blob storage usage for image-heavy apps.
+</ParamField>
+
+<ParamField path="responseBodySizeLimit" type="Int" default="8 MB">
+  Maximum size of a stored request or response body in bytes. Bodies larger than this limit are silently discarded.
+</ParamField>
+
+<ParamField path="maxAge" type="TimeInterval" default="14 days">
+  Sessions and all associated messages older than this interval are automatically deleted during a sweep.
+</ParamField>
+
+<ParamField path="willHandleEvent" type="(Event) -> Event?">
+  A closure called before every event is stored. Return `nil` to drop the event entirely, or return a modified copy to redact sensitive fields.
+
+  ```swift
+  LoggerStore.shared.configuration.willHandleEvent = { event in
+      // Drop events containing sensitive headers
+      if case .networkTaskCompleted(var e) = event {
+          e.originalRequest.headers?["Authorization"] = "<redacted>"
+          return .networkTaskCompleted(e)
+      }
+      return event
+  }
+  ```
+</ParamField>
+
+---
+
+## Storing Data Manually
+
+While `NetworkLogger` records `URLSession` traffic automatically, you can also write messages and requests directly.
+
+### Log Messages
+
+```swift
+LoggerStore.shared.storeMessage(
+    label: "auth",
+    level: .info,
+    message: "User signed in",
+    metadata: ["userID": .string("u-1234")]
+)
+```
+
+**Parameters**
+
+| Parameter  | Type                               | Description                                   |
+|------------|------------------------------------|-----------------------------------------------|
+| `label`    | `String`                           | Category label (e.g. `"network"`, `"auth"`).  |
+| `level`    | `LoggerStore.Level`                | Severity: `trace` → `debug` → `info` → `notice` → `warning` → `error` → `critical`. |
+| `message`  | `String`                           | The log message text.                          |
+| `metadata` | `[String: MetadataValue]?`         | Optional key-value pairs attached to the message. |
+
+### Network Requests
+
+Use `storeRequest` to record a completed `URLRequest` in a single call. For incremental logging (progress updates, redirects), use `NetworkLogger` instead.
+
+```swift
+LoggerStore.shared.storeRequest(
+    request,
+    response: httpResponse,
+    error: nil,
+    data: responseData,
+    metrics: taskMetrics
+)
+```
+
+---
+
+## Accessing Stored Data
+
+The store exposes two Core Data contexts.
+
+<ParamField path="viewContext" type="NSManagedObjectContext">
+  The main-thread context. Use this in SwiftUI views and UIKit view controllers to drive UI updates. Changes from background writes are automatically merged.
+</ParamField>
+
+<ParamField path="backgroundContext" type="NSManagedObjectContext">
+  The context used internally for all write operations. You can read from it on a background thread for heavy queries.
+</ParamField>
+
+### Fetching in SwiftUI
+
+`LoggerMessageEntity` and `NetworkTaskEntity` conform to `NSManagedObject`, so you can drive SwiftUI lists directly with `@FetchRequest`.
+
+```swift
+struct AnalyticsLogsView: View {
+    @FetchRequest(
+        sortDescriptors: [NSSortDescriptor(keyPath: \LoggerMessageEntity.createdAt, ascending: true)],
+        predicate: NSPredicate(format: "label == %@", "analytics")
+    ) var messages: FetchedResults<LoggerMessageEntity>
+
+    var body: some View {
+        List(messages, id: \.objectID) { message in
+            Text(message.text)
+        }
+    }
+}
+```
+
+### Fetching Programmatically
+
+```swift
+// All messages, newest first
+let messages = try LoggerStore.shared.messages(
+    sortDescriptors: [SortDescriptor(\.createdAt, order: .reverse)]
+)
+
+// Only failed network tasks
+let failures = try LoggerStore.shared.tasks(
+    predicate: NSPredicate(format: "requestState == %d", NetworkTaskEntity.State.failure.rawValue)
+)
+```
+
+---
+
+## Listening to Events
+
+`LoggerStore.events` is a Combine `PassthroughSubject<Event, Never>` that re-transmits every event as it is processed. Use it to forward logs to the Xcode console or any other sink.
+
+```swift
+import Combine
+
+var cancellables = Set<AnyCancellable>()
+
+LoggerStore.shared.events.sink { event in
+    if case .messageStored(let message) = event {
+        print("[\(message.level)] \(message.label): \(message.message)")
+    }
+}.store(in: &cancellables)
+```
+
+The `Event` enum has four cases:
+
+| Case                             | When it fires                                 |
+|----------------------------------|-----------------------------------------------|
+| `.messageStored(MessageCreated)` | A log message was stored.                     |
+| `.networkTaskCreated(...)`       | A new network task was registered.            |
+| `.networkTaskProgressUpdated(…)` | Upload or download progress changed.          |
+| `.networkTaskCompleted(...)`     | A network task finished (success or failure). |
+
+---
+
+## Sessions
+
+Each app launch creates a new **session** identified by a `UUID`. All messages and network tasks are tagged with the session ID of the run that produced them.
+
+```swift
+// The current session ID
+let sessionID: UUID = LoggerStore.shared.session.id
+let startDate: Date  = LoggerStore.shared.session.startDate
+```
+
+Sessions are stored as `LoggerSessionEntity` objects and can be used as filters when fetching data or exporting.
+
+---
+
+## Store Info
+
+`LoggerStore.Info` provides a snapshot of the store's current state.
+
+```swift
+let info = try await LoggerStore.shared.info()
+
+print("Messages : \(info.messageCount)")
+print("Requests : \(info.taskCount)")
+print("Blobs    : \(info.blobCount)")
+print("Size     : \(info.totalStoreSize) bytes")
+```
+
+| Property              | Description                                                        |
+|-----------------------|--------------------------------------------------------------------|
+| `messageCount`        | Number of log messages (excluding internal network task messages). |
+| `taskCount`           | Number of recorded network tasks.                                  |
+| `blobCount`           | Number of stored request/response bodies.                          |
+| `totalStoreSize`      | Total size of the store package on disk in bytes.                  |
+| `blobsSize`           | Compressed size of all stored bodies.                              |
+| `blobsDecompressedSize` | Decompressed size of all stored bodies.                          |
+
+---
+
+## Exporting
+
+Create a shareable `.pulse` archive with `export(to:options:)`. The archive format uses lzfse compression and is optimized for size.
+
+```swift
+let targetURL = FileManager.default
+    .urls(for: .documentDirectory, in: .userDomainMask)[0]
+    .appendingPathComponent("export.pulse")
+
+try await LoggerStore.shared.export(to: targetURL)
+```
+
+Export a subset using `ExportOptions`:
+
+```swift
+let options = LoggerStore.ExportOptions(
+    predicate: NSPredicate(format: "level >= %d", LoggerStore.Level.error.rawValue),
+    sessions: [LoggerStore.shared.session.id]
+)
+try await LoggerStore.shared.export(to: targetURL, options: options)
+```
+
+<Note>
+The destination file must not already exist. The exported archive receives a new `storeId` so it is treated as a distinct store by Pulse Pro.
+</Note>
+
+---
+
+## Sweep Behavior
+
+When the store is opened with the `.sweep` option, Pulse periodically runs a sweep to keep disk usage in check:
+
+1. **Expire old sessions** — removes sessions (and all their data) older than `configuration.maxAge` (default: 14 days).
+2. **Trim the database** — if `totalStoreSize > sizeLimit`, removes the oldest ~30% of messages.
+3. **Trim blobs** — if blob storage exceeds ~70% of `sizeLimit`, removes request/response bodies starting from the oldest tasks.
+
+Sweeps run at most once per hour (`sweepInterval`) and are triggered automatically in the background 10 seconds after initialization.
+
+To remove all data immediately:
+
+```swift
+LoggerStore.shared.removeAll()
+```
+
+To remove specific sessions:
+
+```swift
+LoggerStore.shared.removeSessions(withIDs: [sessionID])
+```

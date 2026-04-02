@@ -1,0 +1,125 @@
+---
+title: 'Redacting sensitive data'
+description: 'Remove credentials, tokens, and private fields from logs before they are stored or shared.'
+keywords: ['redaction', 'sensitive data', 'headers', 'query items', 'JSON fields', 'privacy', 'security']
+---
+
+## Overview
+
+Pulse stores logs in a local database on-device and never sends them to any server. However, logs are designed to be shared — you can export them as a `.pulse` file and send them to a colleague or attach them to a bug report. Any sensitive information present in requests or responses will be included in that export.
+
+Use `NetworkLogger.Configuration` to redact credentials and private fields before they are written to the store.
+
+## Redacting HTTP headers
+
+Set `sensitiveHeaders` to replace the values of specific request and response headers with `"<private>"`:
+
+```swift
+NetworkLogger.shared = NetworkLogger {
+    $0.sensitiveHeaders = ["Authorization", "Access-Token", "X-API-Key"]
+}
+```
+
+Header matching is case-insensitive. Wildcards are supported when `isRegexEnabled` is `false` (the default), so `X-*` would match any header whose name starts with `X-`.
+
+## Redacting query parameters
+
+Set `sensitiveQueryItems` to replace the values of specific URL query parameters:
+
+```swift
+NetworkLogger.shared = NetworkLogger {
+    $0.sensitiveQueryItems = ["password", "token", "api_key"]
+}
+```
+
+Query item matching is case-sensitive and supports plain strings only (no wildcards or regex). Matched parameter values are replaced with `"private"` in the stored URL.
+
+## Redacting JSON body fields
+
+Set `sensitiveDataFields` to redact fields from JSON request and response bodies:
+
+```swift
+NetworkLogger.shared = NetworkLogger {
+    $0.sensitiveDataFields = ["password", "ssn", "creditCard"]
+}
+```
+
+Matching is case-sensitive. Redaction is deep — the field is replaced with `"<private>"` at every level of nesting in the JSON object, including inside arrays and nested objects.
+
+<Note>
+Deep redaction of `sensitiveDataFields` is supported from Pulse 5.1.1 onwards. In earlier versions, only top-level fields were redacted.
+</Note>
+
+## Full example
+
+```swift
+import Pulse
+
+var configuration = NetworkLogger.Configuration()
+
+// Headers
+configuration.sensitiveHeaders = ["Authorization", "Access-Token"]
+
+// Query parameters
+configuration.sensitiveQueryItems = ["password", "token"]
+
+// JSON body fields (request and response)
+configuration.sensitiveDataFields = ["password", "ssn"]
+
+NetworkLogger.shared = NetworkLogger(configuration: configuration)
+```
+
+## Custom redaction with willHandleEvent
+
+For cases that the built-in properties do not cover, use the `willHandleEvent` closure to inspect and modify every event before it is stored:
+
+```swift
+NetworkLogger.shared = NetworkLogger {
+    $0.willHandleEvent = { event in
+        guard case .networkTaskCompleted(var e) = event else {
+            return event
+        }
+        // Replace a custom header value with a redacted placeholder.
+        if var headers = e.originalRequest.headers,
+           headers["X-Internal-Session"] != nil {
+            headers["X-Internal-Session"] = "<redacted>"
+            e.originalRequest.headers = headers
+        }
+        return .networkTaskCompleted(e)
+    }
+}
+```
+
+Return `nil` from the closure to drop the event entirely and prevent it from being stored.
+
+## Metrics contain request/response copies
+
+`NetworkLogger.Metrics` records individual transaction metrics that each contain a snapshot of the request and response as they were at that point in the connection lifecycle. If you manually modify requests or responses in `willHandleEvent`, you must also update the corresponding entries in `metrics.transactions`.
+
+<Warning>
+If you redact information from requests or responses manually, also update `NetworkLogger.Metrics`. Each transaction within the metrics object contains its own copy of the request and response pair. Failing to redact both will leave sensitive data in the metrics.
+</Warning>
+
+```swift
+$0.willHandleEvent = { event in
+    guard case .networkTaskCompleted(var e) = event else { return event }
+
+    // Redact the header from the main request.
+    e.originalRequest = e.originalRequest.redactingSensitiveHeaders(["Authorization"])
+
+    // Also redact from every transaction in the metrics.
+    if var metrics = e.metrics {
+        metrics.transactions = metrics.transactions.map { transaction in
+            var t = transaction
+            t.request = t.request.redactingSensitiveHeaders(["Authorization"])
+            t.response = t.response?.redactingSensitiveHeaders(["Authorization"])
+            return t
+        }
+        e.metrics = metrics
+    }
+
+    return .networkTaskCompleted(e)
+}
+```
+
+`NetworkLogger.Request` and `NetworkLogger.Response` both expose a public `redactingSensitiveHeaders(_:)` method that accepts a `Set<String>` and returns a modified copy.

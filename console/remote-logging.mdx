@@ -1,0 +1,184 @@
+---
+title: "Remote Logging"
+description: "Connect your app to Pulse Pro over your local network to see logs in real time."
+---
+
+## Overview
+
+`RemoteLogger` discovers and connects to the [Pulse Pro](https://pulselogger.com) macOS and iOS apps running on your local network. Once connected, every log message and network request is streamed to Pulse Pro in real time — without any data leaving your network or touching an external server.
+
+<Note>
+Logs are buffered locally and **never sent to external servers**. Remote Logging works exclusively over your local Wi-Fi or peer-to-peer network.
+</Note>
+
+## Setup
+
+<Steps>
+  <Step title="Update Info.plist">
+    Add the following entries to your app's `Info.plist`. These are required by iOS before the app can browse the local network:
+
+    ```xml
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Network usage required only for development purposes</string>
+    <key>NSBonjourServices</key>
+    <array>
+      <string>_pulse._tcp</string>
+    </array>
+    ```
+
+    <Warning>
+    Without these keys, `RemoteLogger` will silently fail to discover servers. iOS requires both keys to be present before showing the local network permission prompt.
+    </Warning>
+  </Step>
+
+  <Step title="Enable Remote Logging">
+    Choose one of the two options below:
+
+    <Tabs>
+      <Tab title="Option A — Automatic (Recommended)">
+        Set `isAutomaticConnectionEnabled` to `true` at app launch. The logger will connect to the first available Pulse Pro app it discovers and remember it for subsequent runs:
+
+        ```swift
+        import Pulse
+
+        #if DEBUG
+        RemoteLogger.shared.isAutomaticConnectionEnabled = true
+        #endif
+        ```
+
+        <Warning>
+        Never enable automatic connection in production builds. Server discovery uses Bluetooth, which triggers a system permission prompt on the first launch.
+        </Warning>
+      </Tab>
+      <Tab title="Option B — Manual">
+        Users can enable remote logging themselves from inside your app:
+
+        1. Open `ConsoleView` in your app.
+        2. Tap the **Settings** tab (or gear icon).
+        3. Enable **Remote Logging**.
+        4. Select your Mac or iOS device running Pulse Pro from the list.
+
+        Once a connection is established, the selection is remembered and reconnection happens automatically on subsequent launches.
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Open Pulse Pro">
+    Launch [Pulse Pro](https://pulselogger.com) on your Mac or iOS device. Your app will appear in the sidebar once connected. Pulse Pro is available on the [App Store](https://apps.apple.com/us/app/pulse-network-logger/id6661031747).
+  </Step>
+</Steps>
+
+## How It Works
+
+`RemoteLogger` uses `NWBrowser` to discover Pulse Pro instances advertising the `_pulse._tcp` Bonjour service on the local network. When a matching server is found:
+
+1. A TCP (or TLS-encrypted, if passcode-protected) connection is established.
+2. A handshake packet is exchanged to negotiate the protocol version and share device/app metadata.
+3. Log events are streamed in real time as they are recorded by `LoggerStore`.
+
+Events generated before the connection is ready (i.e., during the first ~3 seconds of app startup) are held in an in-memory buffer and flushed once the server acknowledges readiness.
+
+## Observing Connection State
+
+`RemoteLogger` is an `ObservableObject`. Subscribe to it in SwiftUI or use Combine to react to state changes:
+
+```swift
+import Pulse
+import SwiftUI
+
+struct RemoteLoggerStatusView: View {
+    @ObservedObject var logger = RemoteLogger.shared
+
+    var body: some View {
+        switch logger.connectionState {
+        case .disconnected:
+            Label("Disconnected", systemImage: "wifi.slash")
+        case .connecting:
+            Label("Connecting…", systemImage: "wifi.exclamationmark")
+        case .connected:
+            Label("Connected to \(logger.selectedServerName ?? "server")", systemImage: "wifi")
+        }
+    }
+}
+```
+
+### `ConnectionState` enum
+
+| Case | Description |
+|---|---|
+| `.disconnected` | Not connected to any server. |
+| `.connecting` | Actively trying to connect. |
+| `.connected` | Connected and streaming logs. |
+
+## Discovering and Selecting Servers
+
+| Property | Type | Description |
+|---|---|---|
+| `servers` | `Set<NWBrowser.Result>` | All Pulse Pro instances currently visible on the network. |
+| `knownServers` | `[String]` | Names of servers the app has previously connected to. |
+| `selectedServerName` | `String?` | The name of the server currently connected or being connected to. |
+
+To connect to a specific server programmatically:
+
+```swift
+// Connect to a specific discovered server
+if let server = RemoteLogger.shared.servers.first(where: { $0.name == "My Mac" }) {
+    await MainActor.run {
+        RemoteLogger.shared.connect(to: server)
+    }
+}
+```
+
+To forget a server (disconnects, removes passcode, and removes from known list):
+
+```swift
+RemoteLogger.shared.forgetServer(named: "My Mac")
+```
+
+## Passcode-Protected Connections
+
+Pulse Pro supports passcode protection for secure connections. When a server is protected, the connection is established over TLS using the passcode as the encryption key.
+
+Passcodes are stored securely in the system Keychain:
+
+```swift
+// Retrieve the saved passcode for a server
+let passcode = RemoteLogger.shared.getPasscode(forServerNamed: "My Mac")
+
+// Connect with a passcode
+RemoteLogger.shared.connect(to: server, passcode: "my-passcode")
+
+// Update or remove a passcode
+RemoteLogger.shared.setPasscode("new-passcode", forServerNamed: "My Mac")
+RemoteLogger.shared.setPasscode(nil, forServerNamed: "My Mac") // removes
+```
+
+## Response Mocking
+
+When connected to Pulse Pro, you can mock network responses directly from the Pulse Pro UI. The mocks are pushed to the app over the same connection and applied by `NetworkDebugger` at the `URLSession` level — no code changes required in your app.
+
+<Tip>
+Response mocking requires `URLSessionProxy` (or another Pulse network interceptor) to be active. See the network logging guide for setup details.
+</Tip>
+
+## Enabling and Disabling Programmatically
+
+```swift
+// Enable — starts browsing for servers
+RemoteLogger.shared.enable()
+
+// Disable — stops browsing and disconnects
+RemoteLogger.shared.disable()
+
+// One-time check
+print(RemoteLogger.shared.isEnabled) // Bool
+```
+
+<CardGroup cols={2}>
+  <Card title="Integrating the Console" icon="rectangle-terminal" href="/console/integrating-console">
+    Add ConsoleView to display logs inside your app.
+  </Card>
+  <Card title="Sharing Logs" icon="share" href="/console/sharing-logs">
+    Export logs as .pulse archives, HAR files, or plain text.
+  </Card>
+</CardGroup>

@@ -1,0 +1,434 @@
+---
+title: "LoggerStore"
+description: "Persistently stores logs, network requests, and response blobs."
+---
+
+```swift
+public final class LoggerStore: @unchecked Sendable, Identifiable
+```
+
+`LoggerStore` is the central persistence layer for Pulse. It writes log messages and network tasks to a Core Data–backed SQLite database, manages blob (response/request body) storage, and re-publishes store events over a Combine subject so other components (such as `RemoteLogger`) can react in real time.
+
+## Shared Instance
+
+<ResponseField name="shared" type="static var LoggerStore" required>
+  The shared store used by default throughout the app. Replacing this value also registers the new store with `RemoteLogger.shared`.
+
+  ```swift
+  // Replace with a custom store at app launch
+  LoggerStore.shared = try LoggerStore(
+      storeURL: customURL,
+      options: [.create, .sweep]
+  )
+  ```
+</ResponseField>
+
+## Properties
+
+<ResponseField name="storeURL" type="URL">
+  The URL the store was initialised with. Points to the package directory (`.pulse` bundle) on disk.
+</ResponseField>
+
+<ResponseField name="options" type="Options">
+  The `OptionSet` flags with which the store was opened. See [Options](#options) below.
+</ResponseField>
+
+<ResponseField name="configuration" type="Configuration">
+  The store configuration. Controls size limits, save intervals, image thumbnailing, and event filtering. Not thread-safe — change it at app launch before any logs are written.
+</ResponseField>
+
+<ResponseField name="session" type="Session">
+  The current session, or the most recent session for an archive store. Read-only from outside the module (`private(set)`).
+</ResponseField>
+
+<ResponseField name="container" type="NSPersistentContainer">
+  The Core Data container backing the store.
+</ResponseField>
+
+<ResponseField name="viewContext" type="NSManagedObjectContext">
+  The main-thread managed object context. Use this to fetch entities for display.
+</ResponseField>
+
+<ResponseField name="backgroundContext" type="NSManagedObjectContext">
+  The background managed object context used for all write operations.
+</ResponseField>
+
+<ResponseField name="events" type="PassthroughSubject<Event, Never>">
+  Republishes every `Event` that the store processes. Subscribe to this to observe new log messages and network tasks in real time.
+
+  ```swift
+  store.events.sink { event in
+      print("New event: \(event)")
+  }.store(in: &cancellables)
+  ```
+</ResponseField>
+
+<ResponseField name="version" type="Version">
+  The internal schema version of the store (e.g. `3.6.0`).
+</ResponseField>
+
+## Initializer
+
+```swift
+public init(
+    storeURL: URL,
+    options: Options = [.create, .sweep],
+    configuration: Configuration = .init()
+) throws
+```
+
+Creates or opens a Pulse store at the given URL.
+
+<ParamField path="storeURL" type="URL" required>
+  Path to a `.pulse` package directory. The directory must already exist unless `.create` is included in `options`.
+</ParamField>
+
+<ParamField path="options" type="Options">
+  Creation and runtime behaviour flags. Defaults to `[.create, .sweep]`.
+</ParamField>
+
+<ParamField path="configuration" type="Configuration">
+  Store configuration. Defaults to `Configuration()` (256 MB limit, 300 ms save interval, thumbnails enabled, 8 MB response body limit).
+</ParamField>
+
+**Throws** `LoggerStore.Error` — `fileDoesntExist`, `storeInvalid`, `unsupportedVersion`, or `fileAlreadyExists`.
+
+## Methods
+
+### storeMessage
+
+```swift
+public func storeMessage(
+    createdAt: Date? = nil,
+    label: String,
+    level: Level,
+    message: String,
+    metadata: [String: MetadataValue]? = nil,
+    file: String = #file,
+    function: String = #function,
+    line: UInt = #line
+)
+```
+
+Writes a log message to the store.
+
+<ParamField path="createdAt" type="Date?">
+  Timestamp for the message. Defaults to the current date when `nil`.
+</ParamField>
+
+<ParamField path="label" type="String" required>
+  Category or subsystem label, e.g. `"network"` or `"auth"`.
+</ParamField>
+
+<ParamField path="level" type="Level" required>
+  Severity level. See [Level](#level).
+</ParamField>
+
+<ParamField path="message" type="String" required>
+  The human-readable log message body.
+</ParamField>
+
+<ParamField path="metadata" type="[String: MetadataValue]?">
+  Optional key-value pairs attached to the message. Values must be `.string(_:)` or `.stringConvertible(_:)`.
+</ParamField>
+
+<ParamField path="file" type="String">
+  Source file path. Defaults to the call-site file via `#file`.
+</ParamField>
+
+<ParamField path="function" type="String">
+  Source function name. Defaults to the call-site function via `#function`.
+</ParamField>
+
+<ParamField path="line" type="UInt">
+  Source line number. Defaults to the call-site line via `#line`.
+</ParamField>
+
+---
+
+### storeRequest
+
+```swift
+public func storeRequest(
+    _ request: URLRequest,
+    response: URLResponse?,
+    error: Swift.Error?,
+    data: Data?,
+    metrics: URLSessionTaskMetrics? = nil,
+    label: String? = nil,
+    taskDescription: String? = nil
+)
+```
+
+Stores a completed network request in a single call. Use `NetworkLogger` when you need to log incremental task updates (progress, metrics, etc.).
+
+<ParamField path="request" type="URLRequest" required>
+  The original `URLRequest`.
+</ParamField>
+
+<ParamField path="response" type="URLResponse?">
+  The HTTP response, or `nil` if the request failed before receiving one.
+</ParamField>
+
+<ParamField path="error" type="Swift.Error?">
+  The transport-level error, if any.
+</ParamField>
+
+<ParamField path="data" type="Data?">
+  The response body data.
+</ParamField>
+
+<ParamField path="metrics" type="URLSessionTaskMetrics?">
+  Optional task metrics collected by `URLSession`.
+</ParamField>
+
+<ParamField path="label" type="String?">
+  Optional label to tag the logged request.
+</ParamField>
+
+<ParamField path="taskDescription" type="String?">
+  Optional description forwarded from `URLSessionTask.taskDescription`.
+</ParamField>
+
+---
+
+### export
+
+```swift
+public func export(to targetURL: URL, options: ExportOptions = .init()) async throws
+```
+
+Creates a compressed `.pulse` archive at `targetURL`. The destination directory must exist; the file must not already exist.
+
+<ParamField path="targetURL" type="URL" required>
+  Destination URL for the exported archive.
+</ParamField>
+
+<ParamField path="options" type="ExportOptions">
+  Optional predicate and session filter for partial exports.
+</ParamField>
+
+---
+
+### messages
+
+```swift
+public func messages(
+    sortDescriptors: [SortDescriptor<LoggerMessageEntity>] = [SortDescriptor(\.createdAt, order: .forward)],
+    predicate: NSPredicate? = nil,
+    context: NSManagedObjectContext? = nil
+) throws -> [LoggerMessageEntity]
+```
+
+Fetches stored log messages. The result includes messages associated with network tasks unless you pass `NSPredicate(format: "task == NULL")`.
+
+<ParamField path="sortDescriptors" type="[SortDescriptor<LoggerMessageEntity>]">
+  Sort order. Defaults to chronological by `createdAt`.
+</ParamField>
+
+<ParamField path="predicate" type="NSPredicate?">
+  Optional fetch predicate. Defaults to `nil` (all messages).
+</ParamField>
+
+<ParamField path="context" type="NSManagedObjectContext?">
+  Managed object context to use. Defaults to `viewContext`.
+</ParamField>
+
+---
+
+### tasks
+
+```swift
+public func tasks(
+    sortDescriptors: [SortDescriptor<NetworkTaskEntity>] = [SortDescriptor(\.createdAt, order: .forward)],
+    predicate: NSPredicate? = nil,
+    context: NSManagedObjectContext? = nil
+) throws -> [NetworkTaskEntity]
+```
+
+Fetches stored network tasks.
+
+<ParamField path="sortDescriptors" type="[SortDescriptor<NetworkTaskEntity>]">
+  Sort order. Defaults to chronological by `createdAt`.
+</ParamField>
+
+<ParamField path="predicate" type="NSPredicate?">
+  Optional fetch predicate. Defaults to `nil` (all tasks).
+</ParamField>
+
+<ParamField path="context" type="NSManagedObjectContext?">
+  Managed object context to use. Defaults to `viewContext`.
+</ParamField>
+
+---
+
+### info
+
+```swift
+public func info() async throws -> Info
+```
+
+Returns statistics and metadata about the current store (message count, store size, app info, device info, etc.). Thread-safe, but must not be called from inside the `backgroundContext` queue.
+
+---
+
+### removeAll
+
+```swift
+public func removeAll()
+```
+
+Removes all previously recorded messages, tasks, and blobs from the store, then starts a fresh session.
+
+---
+
+### destroy
+
+```swift
+public func destroy() throws
+```
+
+Safely closes the database, then deletes the entire store package from disk.
+
+<Warning>
+  After calling `destroy()`, the store can no longer accept new messages. Create a new `LoggerStore` instance if you need to continue logging.
+</Warning>
+
+---
+
+## Options
+
+```swift
+public struct Options: OptionSet, Sendable
+```
+
+<ResponseField name=".create" type="Options">
+  Creates the store package directory if it does not yet exist. The parent directory must already exist.
+</ResponseField>
+
+<ResponseField name=".sweep" type="Options">
+  Automatically removes the oldest messages and blobs when the store exceeds `configuration.sizeLimit`. Sweep runs approximately every hour.
+</ResponseField>
+
+<ResponseField name=".readonly" type="Options">
+  Opens the store in read-only mode. Sweeps and all write operations are disabled.
+</ResponseField>
+
+<ResponseField name=".inMemory" type="Options">
+  Writes nothing to disk. Useful for unit tests. The `.create` option is not required when `.inMemory` is set.
+</ResponseField>
+
+<ResponseField name=".synchronous" type="Options">
+  All writes are flushed to disk immediately and synchronously instead of being coalesced. Not recommended for production because it significantly reduces write throughput.
+</ResponseField>
+
+---
+
+## Configuration
+
+```swift
+public struct Configuration: @unchecked Sendable
+```
+
+<ResponseField name="sizeLimit" type="Int64">
+  Approximate total size limit for the store (database + blobs). Defaults to **256 MB** (`256_000_000` bytes). Requires the `.sweep` option to take effect.
+</ResponseField>
+
+<ResponseField name="saveInterval" type="DispatchTimeInterval">
+  How frequently accumulated writes are flushed to disk. Defaults to **300 ms**. Increasing this value reduces I/O at the cost of potential data loss on crash.
+</ResponseField>
+
+<ResponseField name="isStoringOnlyImageThumbnails" type="Bool">
+  When `true` (default), image response bodies larger than 15 KB are downscaled to a thumbnail before storage.
+</ResponseField>
+
+<ResponseField name="imageThumbnailOptions" type="ThumbnailOptions">
+  Controls thumbnail generation. Default: `maximumPixelSize = 512`, `compressionQuality = 0.5`.
+</ResponseField>
+
+<ResponseField name="responseBodySizeLimit" type="Int">
+  Maximum size of any single request or response body stored. Defaults to **8 MB** (`8 * 1_048_576` bytes). Bodies larger than this limit are silently discarded.
+</ResponseField>
+
+<ResponseField name="maxAge" type="TimeInterval">
+  Messages older than this interval are removed during a sweep. Defaults to **14 days** (`14 * 86400` seconds).
+</ResponseField>
+
+<ResponseField name="willHandleEvent" type="@Sendable (Event) -> Event?">
+  Called for every incoming event before it is persisted. Return the event (possibly modified) to store it, or return `nil` to drop it entirely. Use this hook to redact sensitive data.
+
+  ```swift
+  var config = LoggerStore.Configuration()
+  config.willHandleEvent = { event in
+      // Drop all trace-level messages
+      if case .messageStored(let msg) = event, msg.level == .trace {
+          return nil
+      }
+      return event
+  }
+  ```
+</ResponseField>
+
+---
+
+## Event
+
+```swift
+@frozen public enum Event: Sendable
+```
+
+Events emitted by the store and forwarded over `events`. Also used as the sync protocol between `LoggerStore` and `RemoteLogger`.
+
+<ResponseField name=".messageStored(MessageCreated)" type="case">
+  A log message was stored. The associated value contains the message content (label, level, text, metadata, source location).
+</ResponseField>
+
+<ResponseField name=".networkTaskCreated(NetworkTaskCreated)" type="case">
+  A new network task was registered. Contains the task ID, type, original request, and optional label.
+</ResponseField>
+
+<ResponseField name=".networkTaskProgressUpdated(NetworkTaskProgressUpdated)" type="case">
+  Progress was reported for an in-flight task (`completedUnitCount` / `totalUnitCount`).
+</ResponseField>
+
+<ResponseField name=".networkTaskCompleted(NetworkTaskCompleted)" type="case">
+  A network task finished. Contains the full request/response pair, optional error, bodies, and metrics.
+</ResponseField>
+
+---
+
+## Level
+
+```swift
+@frozen public enum Level: Int16, CaseIterable, Codable, Comparable
+```
+
+Compatible with `SwiftLog.Logger.Level`.
+
+<ResponseField name=".trace" type="Level (rawValue: 1)">
+  Finest-grained diagnostic information.
+</ResponseField>
+
+<ResponseField name=".debug" type="Level (rawValue: 2)">
+  Debugging information useful during development.
+</ResponseField>
+
+<ResponseField name=".info" type="Level (rawValue: 3)">
+  Informational messages highlighting normal operation.
+</ResponseField>
+
+<ResponseField name=".notice" type="Level (rawValue: 4)">
+  Normal but noteworthy conditions.
+</ResponseField>
+
+<ResponseField name=".warning" type="Level (rawValue: 5)">
+  Potentially harmful conditions that do not prevent operation.
+</ResponseField>
+
+<ResponseField name=".error" type="Level (rawValue: 6)">
+  Error events that may allow the operation to continue.
+</ResponseField>
+
+<ResponseField name=".critical" type="Level (rawValue: 7)">
+  Severe errors that will likely cause the application to abort.
+</ResponseField>

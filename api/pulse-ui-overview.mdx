@@ -1,0 +1,185 @@
+---
+title: "PulseUI Overview"
+description: "Overview of all public views and utilities available in the PulseUI module."
+---
+
+## Overview
+
+`PulseUI` is the UI layer of the Pulse SDK. It provides SwiftUI views and UIKit helpers for on-device log inspection, filtering, and export. All views are built on top of `LoggerStore` from the `Pulse` module.
+
+```swift
+import PulseUI
+```
+
+**Supported platforms:** iOS 16+, tvOS 16+, watchOS (simplified), visionOS 1+
+
+<Note>
+  macOS support was removed in Pulse 5.0. Use [Pulse Pro](https://pulselogger.com) to inspect `.pulse` archives or connect to a device running the Remote Logger.
+</Note>
+
+## Public Views
+
+### ConsoleView
+
+The primary view of the `PulseUI` module. Displays a live, filterable list of log messages and network tasks from a `LoggerStore`.
+
+```swift
+public struct ConsoleView: View {
+    public init(store: LoggerStore = .shared, mode: ConsoleMode = .all)
+}
+```
+
+**Key capabilities:**
+- Unified list of messages and network requests
+- Built-in search and filter panel
+- Session picker to scope results
+- Share button that opens `ShareStoreView`
+- Full network inspector with headers, body, metrics, and cURL
+
+See [ConsoleView](/api/console-view) for full documentation.
+
+### SettingsView
+
+Displays per-store settings including Remote Logger connectivity and store metadata. Shown automatically inside `ConsoleView` when the user taps the settings gear icon.
+
+```swift
+// iOS / visionOS
+@available(iOS 16, visionOS 1, *)
+public struct SettingsView: View {
+    public init(store: LoggerStore = .shared)
+}
+```
+
+You can embed `SettingsView` directly if you need to expose settings outside of the main console:
+
+```swift
+NavigationLink("Pulse Settings") {
+    SettingsView()
+}
+```
+
+### ShareStoreView
+
+A form that lets users choose which sessions, log levels, and output format to include when exporting a `LoggerStore`. The share sheet is presented automatically when the user taps "Share".
+
+```swift
+@available(iOS 16, macOS 13, watchOS 9, visionOS 1, *)
+package struct ShareStoreView: View {
+    package init(sessions: Set<UUID> = [], onDismiss: @escaping () -> Void)
+}
+```
+
+`ShareStoreView` is typically not instantiated directly — it appears via the share button in `ConsoleView`. It can be embedded in a `NavigationView` and presented as a sheet:
+
+```swift
+.sheet(isPresented: $isShowingShare) {
+    NavigationView {
+        ShareStoreView(onDismiss: { isShowingShare = false })
+    }
+}
+```
+
+**Output formats available to the user:**
+- `.store` — a binary `.pulse` archive (default)
+- `.text` — plain text log dump
+- `.har` — HTTP Archive format (network requests only)
+
+### MainViewController (UIKit)
+
+A `UIViewController` subclass that embeds `ConsoleView` inside a `UINavigationController`. Use this for straightforward UIKit presentation without any SwiftUI boilerplate.
+
+```swift
+public final class MainViewController: UIViewController {
+    public static var isAutomaticAppearanceOverrideRemovalEnabled: Bool // default: true
+    public init(store: LoggerStore = .shared)
+}
+```
+
+```swift
+present(MainViewController(), animated: true)
+```
+
+When `isAutomaticAppearanceOverrideRemovalEnabled` is `true` (the default), the controller resets `UINavigationBar` appearance overrides scoped to itself, preventing global tint or bar color customizations from affecting the console.
+
+## ConsoleMode
+
+Controls what `ConsoleView` displays.
+
+```swift
+public enum ConsoleMode: String {
+    case all      // Messages and network tasks, with toggle
+    case logs     // Log messages only
+    case network  // Network tasks only
+}
+```
+
+## UserSettings
+
+`UserSettings` is an `ObservableObject` that lets you read and write Pulse's persistent display and behavior preferences programmatically. It is backed by `AppStorage` (i.e., `UserDefaults`).
+
+```swift
+public final class UserSettings: ObservableObject {
+    public static let shared: UserSettings
+}
+```
+
+### Available Settings
+
+| Property | Type | Default | Description |
+|----------|------|---------|-------------|
+| `mode` | `ConsoleMode` | `.network` | The console's default display mode |
+| `lineLimit` | `Int` | `3` | Max lines shown per message cell in the list |
+| `isLinkDetectionEnabled` | `Bool` | `false` | Enables hyperlink detection in response body viewer |
+| `sharingOutput` | `ShareStoreOutput` | `.store` | Default export format |
+| `isShowingCurrentRequest` | `Bool` | `true` | Whether the inspector shows the current or original request |
+| `isRemoteLoggingHidden` | `Bool` | `false` | Hides the Remote Logger section from Settings |
+| `allowedShareStoreOutputs` | `[ShareStoreOutput]` | `[]` | Restricts available export formats |
+| `listDisplayOptions` | `ConsoleListDisplaySettings` | default | Controls what fields appear in task list cells |
+
+Example — set the default console mode to show all messages on first launch:
+
+```swift
+import PulseUI
+
+UserSettings.shared.mode = .all
+```
+
+## Usage Example
+
+A typical integration embeds `ConsoleView` behind a debug-only menu item:
+
+```swift
+import SwiftUI
+import PulseUI
+
+struct DebugView: View {
+    var body: some View {
+        List {
+            NavigationLink("Console") {
+                ConsoleView()
+            }
+            NavigationLink("Network Only") {
+                ConsoleView(mode: .network)
+            }
+        }
+        .navigationTitle("Debug")
+    }
+}
+```
+
+Gate the debug view itself so it never appears in production:
+
+```swift
+#if DEBUG
+DebugView()
+#endif
+```
+
+<CardGroup cols={2}>
+  <Card title="ConsoleView" href="/api/console-view">
+    Full API reference for ConsoleView
+  </Card>
+  <Card title="Remote Logging" href="/console/remote-logging">
+    Stream logs to Pulse Pro over the network
+  </Card>
+</CardGroup>

@@ -1,0 +1,235 @@
+---
+title: "URLSessionProxy"
+description: "A thin wrapper on top of URLSession that enables automatic network request logging and Pulse debugging features."
+---
+
+## Overview
+
+`URLSessionProxy` is a drop-in replacement for `Foundation.URLSession` that intercepts all network activity and forwards it to `NetworkLogger`. It belongs to the `Pulse` module and requires no changes to your existing request logic — just swap out the session.
+
+```swift
+import Pulse
+
+let session = URLSessionProxy(configuration: .default)
+```
+
+Under the hood, `URLSessionProxy` installs a `URLSessionProxyDelegate` as the session's delegate, which intercepts callbacks and records them. When `isMockingEnabled` is `true` (the default), it also prepends `MockingURLProtocol` to the configuration's `protocolClasses`, enabling request mocking in tests.
+
+## Declaration
+
+```swift
+public final class URLSessionProxy: URLSessionProtocol, @unchecked Sendable
+```
+
+**Module:** `Pulse`
+
+## Properties
+
+| Name | Type | Description |
+|------|------|-------------|
+| `session` | `Foundation.URLSession` | The underlying URLSession. Use this when you need to access URLSession APIs not covered by `URLSessionProtocol`. |
+
+## Options
+
+```swift
+public struct Options: Sendable
+```
+
+<ParamField body="isMockingEnabled" type="Bool" default="true">
+  When `true`, `MockingURLProtocol` is prepended to the session configuration's `protocolClasses`. This enables request mocking during debug builds and tests.
+</ParamField>
+
+## Initializers
+
+### `init(configuration:logger:options:)`
+
+Convenience initializer for sessions that don't require a custom delegate.
+
+```swift
+public convenience init(
+    configuration: URLSessionConfiguration,
+    logger: NetworkLogger? = nil,
+    options: Options = .init()
+)
+```
+
+<ParamField body="configuration" type="URLSessionConfiguration" required>
+  The session configuration to use. The proxy may mutate `protocolClasses` on this object when mocking is enabled.
+</ParamField>
+
+<ParamField body="logger" type="NetworkLogger?" default="nil">
+  A custom logger instance. If `nil`, `NetworkLogger.shared` is used.
+</ParamField>
+
+<ParamField body="options" type="Options" default=".init()">
+  Configuration options for the proxy, such as enabling mocking support.
+</ParamField>
+
+### `init(configuration:delegate:delegateQueue:logger:options:)`
+
+Full initializer that accepts a custom session delegate. The provided delegate is retained and receives forwarded callbacks alongside Pulse's own interception.
+
+```swift
+public init(
+    configuration: URLSessionConfiguration,
+    delegate: (any URLSessionDelegate)?,
+    delegateQueue: OperationQueue? = nil,
+    logger: NetworkLogger? = nil,
+    options: Options = .init()
+)
+```
+
+<ParamField body="configuration" type="URLSessionConfiguration" required>
+  The session configuration to use.
+</ParamField>
+
+<ParamField body="delegate" type="(any URLSessionDelegate)?" required>
+  Your app's existing session delegate. Pass `nil` if you don't need one.
+</ParamField>
+
+<ParamField body="delegateQueue" type="OperationQueue?" default="nil">
+  The operation queue for delegate callbacks. Passed directly to the underlying `URLSession`.
+</ParamField>
+
+<ParamField body="logger" type="NetworkLogger?" default="nil">
+  A custom logger instance. If `nil`, `NetworkLogger.shared` is used.
+</ParamField>
+
+<ParamField body="options" type="Options" default=".init()">
+  Configuration options for the proxy.
+</ParamField>
+
+## Implemented URLSession APIs
+
+`URLSessionProxy` implements the full `URLSessionProtocol` surface, delegating every call to the underlying `session`.
+
+### Data Tasks
+
+```swift
+func dataTask(with request: URLRequest) -> URLSessionDataTask
+func dataTask(with url: URL) -> URLSessionDataTask
+func dataTask(with request: URLRequest, completionHandler: @escaping @Sendable (Data?, URLResponse?, (any Error)?) -> Void) -> URLSessionDataTask
+func dataTask(with url: URL, completionHandler: @escaping @Sendable (Data?, URLResponse?, (any Error)?) -> Void) -> URLSessionDataTask
+```
+
+### Upload Tasks
+
+```swift
+func uploadTask(with request: URLRequest, from bodyData: Data) -> URLSessionUploadTask
+func uploadTask(with request: URLRequest, fromFile fileURL: URL) -> URLSessionUploadTask
+func uploadTask(withStreamedRequest request: URLRequest) -> URLSessionUploadTask
+func uploadTask(with request: URLRequest, from bodyData: Data?, completionHandler: @escaping @Sendable (Data?, URLResponse?, (any Error)?) -> Void) -> URLSessionUploadTask
+func uploadTask(with request: URLRequest, fromFile fileURL: URL, completionHandler: @escaping @Sendable (Data?, URLResponse?, (any Error)?) -> Void) -> URLSessionUploadTask
+
+// iOS 17+, tvOS 17+, macOS 14+, watchOS 10+
+func uploadTask(withResumeData resumeData: Data) -> URLSessionUploadTask
+func uploadTask(withResumeData resumeData: Data, completionHandler: @escaping @Sendable (Data?, URLResponse?, (any Error)?) -> Void) -> URLSessionUploadTask
+```
+
+### Download Tasks
+
+```swift
+func downloadTask(with request: URLRequest) -> URLSessionDownloadTask
+func downloadTask(with url: URL) -> URLSessionDownloadTask
+func downloadTask(withResumeData resumeData: Data) -> URLSessionDownloadTask
+func downloadTask(with request: URLRequest, completionHandler: @escaping @Sendable (URL?, URLResponse?, (any Error)?) -> Void) -> URLSessionDownloadTask
+func downloadTask(with url: URL, completionHandler: @escaping @Sendable (URL?, URLResponse?, (any Error)?) -> Void) -> URLSessionDownloadTask
+func downloadTask(withResumeData resumeData: Data, completionHandler: @escaping @Sendable (URL?, URLResponse?, (any Error)?) -> Void) -> URLSessionDownloadTask
+```
+
+### Swift Concurrency (async/await)
+
+```swift
+func data(for request: URLRequest, delegate: (any URLSessionTaskDelegate)?) async throws -> (Data, URLResponse)
+func data(from url: URL, delegate: (any URLSessionTaskDelegate)?) async throws -> (Data, URLResponse)
+func upload(for request: URLRequest, from bodyData: Data, delegate: (any URLSessionTaskDelegate)?) async throws -> (Data, URLResponse)
+func upload(for request: URLRequest, fromFile fileURL: URL, delegate: (any URLSessionTaskDelegate)?) async throws -> (Data, URLResponse)
+func download(for request: URLRequest, delegate: (any URLSessionTaskDelegate)?) async throws -> (URL, URLResponse)
+func download(from url: URL, delegate: (any URLSessionTaskDelegate)?) async throws -> (URL, URLResponse)
+func download(resumeFrom resumeData: Data, delegate: (any URLSessionTaskDelegate)?) async throws -> (URL, URLResponse)
+func bytes(for request: URLRequest, delegate: (any URLSessionTaskDelegate)?) async throws -> (URLSession.AsyncBytes, URLResponse)
+func bytes(from url: URL, delegate: (any URLSessionTaskDelegate)?) async throws -> (URLSession.AsyncBytes, URLResponse)
+```
+
+### Combine
+
+```swift
+func dataTaskPublisher(for url: URL) -> URLSession.DataTaskPublisher
+func dataTaskPublisher(for request: URLRequest) -> URLSession.DataTaskPublisher
+```
+
+### Other Tasks
+
+```swift
+func streamTask(withHostName hostname: String, port: Int) -> URLSessionStreamTask
+func webSocketTask(with url: URL) -> URLSessionWebSocketTask
+func webSocketTask(with url: URL, protocols: [String]) -> URLSessionWebSocketTask
+func webSocketTask(with request: URLRequest) -> URLSessionWebSocketTask
+```
+
+## URLSessionProtocol
+
+`URLSessionProtocol` is a public protocol defined in the `Pulse` module. Both `URLSession` and `URLSessionProxy` conform to it:
+
+```swift
+public protocol URLSessionProtocol { ... }
+
+extension URLSession: URLSessionProtocol {}
+```
+
+This allows you to declare your networking layer's dependency on the protocol type rather than the concrete `URLSession` class, making it straightforward to swap in `URLSessionProxy` for debug builds without changing call sites.
+
+## Usage Example
+
+Declare your session as `any URLSessionProtocol` (or a generic `<S: URLSessionProtocol>`) so that you can substitute `URLSessionProxy` in debug builds and `URLSession` in production:
+
+```swift
+import Foundation
+import Pulse
+
+#if DEBUG
+let session: any URLSessionProtocol = URLSessionProxy(configuration: .default)
+#else
+let session: any URLSessionProtocol = URLSession(configuration: .default)
+#endif
+
+// Usage is identical in both cases
+let (data, response) = try await session.data(for: URLRequest(url: url))
+```
+
+For an injectable networking client:
+
+```swift
+final class APIClient {
+    private let session: any URLSessionProtocol
+
+    init(session: any URLSessionProtocol = URLSession.shared) {
+        self.session = session
+    }
+
+    func fetch(_ url: URL) async throws -> Data {
+        let (data, _) = try await session.data(from: url)
+        return data
+    }
+}
+
+// In your app entry point (debug only):
+#if DEBUG
+let client = APIClient(session: URLSessionProxy(configuration: .default))
+#else
+let client = APIClient()
+#endif
+```
+
+<Note>
+  Completion-handler variants of `dataTask`, `uploadTask`, and `downloadTask` are handled specially: `URLSessionProxy` wraps them to call `NetworkLogger` with the response data directly, since delegate callbacks are not invoked for completion-handler tasks.
+</Note>
+
+<CardGroup cols={2}>
+  <Card title="URLSessionProxyDelegate" href="/api/url-session-proxy-delegate">
+    Use with existing delegate-based sessions (e.g. Alamofire)
+  </Card>
+  <Card title="PulseProxy" href="/api/pulse-proxy">
+    Zero-setup global capture via method swizzling
+  </Card>
+</CardGroup>

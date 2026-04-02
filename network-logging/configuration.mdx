@@ -1,0 +1,174 @@
+---
+title: 'Configuring network logging'
+description: 'Customize which requests are logged, how filtering works, and how the underlying store behaves.'
+keywords: ['NetworkLogger', 'configuration', 'filtering', 'hosts', 'URLs', 'regex', 'wildcard', 'LoggerStore']
+---
+
+## Overview
+
+`NetworkLogger` and `LoggerStore` both expose a `Configuration` struct that controls what gets logged and how it is stored. The most common starting point is customizing `NetworkLogger.Configuration`.
+
+## NetworkLogger.Configuration
+
+Create a configuration, customize it, then replace the shared logger:
+
+```swift
+import Pulse
+
+var configuration = NetworkLogger.Configuration()
+
+// Only log requests to these hosts.
+configuration.includedHosts = ["*.example.com"]
+
+// Exclude a specific subdomain even if it matches the include pattern.
+configuration.excludedHosts = ["logging.example.com"]
+
+// Exclude specific URL patterns.
+configuration.excludedURLs = ["*/log/event"]
+
+NetworkLogger.shared = NetworkLogger(configuration: configuration)
+```
+
+You can also use the trailing-closure initializer for a more concise setup:
+
+```swift
+NetworkLogger.shared = NetworkLogger {
+    $0.includedHosts = ["*.example.com"]
+    $0.excludedHosts = ["logging.example.com"]
+}
+```
+
+Set `NetworkLogger.shared` once at app launch before any network activity begins.
+
+## Configuration properties
+
+<ParamField path="includedHosts" type="Set<String>" default="[]">
+  Store logs only for requests whose host matches one of these patterns. When empty, all hosts are included (subject to `excludedHosts`). Supports wildcards such as `*.example.com`, and full regex when `isRegexEnabled` is `true`.
+</ParamField>
+
+<ParamField path="includedURLs" type="Set<String>" default="[]">
+  Store logs only for requests whose full URL matches one of these patterns. Supports wildcards and regex.
+</ParamField>
+
+<ParamField path="excludedHosts" type="Set<String>" default="[]">
+  Exclude requests whose host matches any of these patterns from being logged. Evaluated after `includedHosts`.
+</ParamField>
+
+<ParamField path="excludedURLs" type="Set<String>" default="[]">
+  Exclude requests whose full URL matches any of these patterns from being logged. Evaluated after `includedURLs`.
+</ParamField>
+
+<ParamField path="isRegexEnabled" type="Bool" default="false">
+  When `false` (the default), include/exclude patterns support basic wildcard syntax only: `*` matches any sequence of non-whitespace characters and `?` matches any single character. When `true`, patterns are compiled as full regular expressions.
+</ParamField>
+
+<ParamField path="willHandleEvent" type="(LoggerStore.Event) -> LoggerStore.Event?" default="{ $0 }">
+  A closure called for every event before it is stored. Return the event as-is to store it, return a modified copy to transform it, or return `nil` to discard it entirely. Use this for custom filtering or redaction that the built-in options do not cover.
+</ParamField>
+
+<ParamField path="isWaitingForDecoding" type="Bool" default="false">
+  When `true`, a task is not marked as completed until `logTask(_:didFinishDecodingWithError:)` is called. This allows decoding errors to be associated with the network request. See [Capturing decoding errors](/network-logging/decoding-errors).
+</ParamField>
+
+<ParamField path="label" type="String?" default="nil">
+  A custom label attached to all messages stored by this logger instance. Useful for distinguishing traffic from multiple loggers in the same store.
+</ParamField>
+
+## Wildcard and regex patterns
+
+By default, include and exclude patterns support basic wildcard syntax:
+
+| Pattern | Matches |
+|---|---|
+| `*.example.com` | `api.example.com`, `cdn.example.com` |
+| `*/log/event` | `https://api.example.com/log/event` |
+| `api.example.com` | Exact match only |
+
+Enable `isRegexEnabled` to use full regular expression syntax:
+
+```swift
+NetworkLogger.shared = NetworkLogger {
+    $0.isRegexEnabled = true
+    $0.excludedHosts = ["^(logging|metrics)\\.example\\.com$"]
+}
+```
+
+## Custom event filtering
+
+The `willHandleEvent` closure gives you complete control. It is called after the built-in include/exclude filters and before the event is written to the store:
+
+```swift
+NetworkLogger.shared = NetworkLogger {
+    $0.willHandleEvent = { event in
+        // Drop all events for internal health-check endpoints.
+        if case .networkTaskCompleted(let e) = event,
+           e.originalRequest.url?.path == "/healthz" {
+            return nil
+        }
+        return event
+    }
+}
+```
+
+## LoggerStore.Configuration
+
+`LoggerStore.Configuration` controls the on-disk store. You typically only need to change these if you have specific storage constraints.
+
+<ParamField path="sizeLimit" type="Int64" default="256_000_000">
+  Approximate maximum size of the store in bytes (default 256 MB). When the store exceeds this limit, the oldest messages and response blobs are removed automatically (requires the `.sweep` option).
+</ParamField>
+
+<ParamField path="responseBodySizeLimit" type="Int" default="8_388_608">
+  Maximum response (or request) body size stored per task, in bytes. The default is 8 MB. Bodies larger than this limit are truncated.
+</ParamField>
+
+<ParamField path="saveInterval" type="DispatchTimeInterval" default=".milliseconds(300)">
+  How frequently pending writes are flushed to disk. The default of 300 ms batches writes for efficiency. Reduce for lower-latency persistence; increase to reduce write frequency.
+</ParamField>
+
+<ParamField path="isStoringOnlyImageThumbnails" type="Bool" default="true">
+  When `true`, image responses are stored as small thumbnails rather than full-resolution data, significantly reducing store size for image-heavy apps.
+</ParamField>
+
+<ParamField path="maxAge" type="TimeInterval" default="1_209_600">
+  Messages and requests older than this interval (default two weeks) are deleted automatically during a sweep.
+</ParamField>
+
+To apply a custom store configuration:
+
+```swift
+let configuration = LoggerStore.Configuration(sizeLimit: 128_000_000)
+// Pass to the LoggerStore initializer, or set LoggerStore.shared.configuration directly
+// before any writes occur.
+LoggerStore.shared.configuration = configuration
+```
+
+## Tracing in Xcode console
+
+Pulse does not print anything to the Xcode console by default. To add console output, subscribe to `LoggerStore.events`, which re-publishes every event the store processes:
+
+```swift
+import Combine
+import Pulse
+
+var cancellable: AnyCancellable?
+
+func startConsoleLogging(store: LoggerStore) {
+    let queue = DispatchQueue(label: "com.example.console-logger")
+    cancellable = store.events
+        .receive(on: queue)
+        .sink { event in
+            switch event {
+            case .networkTaskCompleted(let e):
+                let status = e.response?.statusCode.map { "\($0)" } ?? "no response"
+                let method = e.originalRequest.httpMethod ?? "GET"
+                let url = e.originalRequest.url?.absoluteString ?? "(unknown)"
+                print("[\(method)] \(status) \(url)")
+            default:
+                break
+            }
+        }
+}
+```
+
+`LoggerStore.events` is a Combine `PassthroughSubject`, so it delivers events synchronously on whichever queue the store processes them. Always `receive(on:)` onto a dedicated queue before performing any work.

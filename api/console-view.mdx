@@ -1,0 +1,196 @@
+---
+title: "ConsoleView"
+description: "A full-featured SwiftUI view for inspecting logs and network requests on-device."
+---
+
+## Overview
+
+`ConsoleView` is the primary user-facing component of the `PulseUI` module. It renders a scrollable list of log messages and network tasks with built-in search, filtering, session selection, and an export button — all in a single SwiftUI view you can embed anywhere in your app.
+
+```swift
+import PulseUI
+
+NavigationLink("Logs") {
+    ConsoleView()
+}
+```
+
+**Module:** `PulseUI`
+
+**Minimum deployment target:** iOS 16, tvOS 16, watchOS (simplified UI), visionOS 1
+
+<Note>
+  macOS support was **removed in Pulse 5.0**. For macOS debugging, use the [Pulse Pro](https://pulselogger.com) app, which can connect to your app via the Remote Logger.
+</Note>
+
+## Declaration
+
+```swift
+public struct ConsoleView: View
+```
+
+## Initializers
+
+### `ConsoleView()`
+
+Creates a console view backed by `LoggerStore.shared`.
+
+```swift
+public init(store: LoggerStore = .shared, mode: ConsoleMode = .all)
+```
+
+<ParamField body="store" type="LoggerStore" default=".shared">
+  The store whose data this view displays. Use `LoggerStore.shared` for the default in-process store, or supply a custom store (e.g., one opened from a file for offline inspection).
+</ParamField>
+
+<ParamField body="mode" type="ConsoleMode" default=".all">
+  The initial display mode. Accepted values:
+
+  - `.all` — shows both log messages and network tasks, with a toggle to switch between them
+  - `.logs` — shows only log messages
+  - `.network` — shows only network tasks
+</ParamField>
+
+## Instance Methods
+
+### `closeButtonHidden(_:)`
+
+Controls whether the built-in close button is shown when the view is presented modally.
+
+```swift
+public func closeButtonHidden(_ isHidden: Bool = true) -> ConsoleView
+```
+
+Returns a new `ConsoleView` with the close button visibility updated. By default the button appears automatically when `presentationMode.isPresented` is `true`.
+
+## Features
+
+The console provides the following built-in functionality:
+
+- **Unified list** of log messages and network tasks, ordered by time
+- **Live filtering** by log level, label, domain, status code, and more via the filter panel
+- **Full-text search** across message text and request/response bodies
+- **Session selector** to scope the list to one or more recording sessions
+- **Share button** that opens `ShareStoreView` to export logs in multiple formats
+- **Context menu** with options to clear logs, toggle display mode, and more
+- **Network inspector** — tapping a network task opens a detail view with request/response headers, body, metrics, and a cURL representation
+
+## Platform Behavior
+
+| Platform | Notes |
+|----------|-------|
+| iOS / visionOS | Full-featured UI with navigation bar, filter panel, share sheet |
+| tvOS | Side-by-side layout: list on the left, filter/settings panel on the right |
+| watchOS | Simplified list with toolbar buttons for toggling network/error modes |
+| macOS | Removed in Pulse 5.0 — use Pulse Pro |
+
+## Integration Options
+
+### NavigationLink (push)
+
+The recommended approach. `ConsoleView` manages its own navigation title.
+
+```swift
+import SwiftUI
+import PulseUI
+
+struct DebugMenu: View {
+    var body: some View {
+        NavigationLink("Show Logs") {
+            ConsoleView()
+        }
+    }
+}
+```
+
+Use `.network` mode if you only log network requests:
+
+```swift
+NavigationLink("Network") {
+    ConsoleView(mode: .network)
+}
+```
+
+### Sheet Presentation
+
+```swift
+import SwiftUI
+import PulseUI
+
+struct ContentView: View {
+    @State private var isConsolePresented = false
+
+    var body: some View {
+        Button("Show Logs") {
+            isConsolePresented = true
+        }
+        .sheet(isPresented: $isConsolePresented) {
+            NavigationView {
+                ConsoleView()
+            }
+        }
+    }
+}
+```
+
+### UIKit via UIHostingController
+
+Present the console from a `UIViewController`:
+
+```swift
+import UIKit
+import SwiftUI
+import PulseUI
+
+// Basic modal presentation
+func showConsole() {
+    let view = NavigationView {
+        ConsoleView()
+    }
+    present(UIHostingController(rootView: view), animated: true)
+}
+```
+
+If your app overrides `UINavigationBar.appearance()` globally (e.g. setting `isTranslucent = false`), set `extendedLayoutIncludesOpaqueBars` to prevent layout glitches:
+
+```swift
+func showConsole() {
+    let vc = UIHostingController(rootView: ConsoleView())
+    vc.extendedLayoutIncludesOpaqueBars = true
+    let nav = UINavigationController(rootViewController: vc)
+    nav.navigationBar.prefersLargeTitles = true
+    present(nav, animated: true)
+}
+```
+
+Alternatively, use `MainViewController`, which wraps this setup automatically:
+
+```swift
+import PulseUI
+
+func showConsole() {
+    present(MainViewController(), animated: true)
+}
+```
+
+### Custom LoggerStore
+
+To inspect a store loaded from a file (e.g. a `.pulse` archive shared by a tester):
+
+```swift
+let store = try LoggerStore(storeURL: fileURL)
+let console = ConsoleView(store: store)
+```
+
+<Tip>
+  If you want to gate the console behind a gesture (e.g. shake), implement `motionEnded(_:with:)` in your root `UIViewController` and present `MainViewController` from there.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="PulseUI Overview" href="/api/pulse-ui-overview">
+    All public views and utilities in PulseUI
+  </Card>
+  <Card title="ShareStoreView" href="/api/pulse-ui-overview#sharestoreview">
+    Export and share logs from the console
+  </Card>
+</CardGroup>

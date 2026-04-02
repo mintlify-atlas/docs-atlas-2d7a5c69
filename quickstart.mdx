@@ -1,80 +1,146 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick start"
+description: "Get Pulse integrated into your app in minutes — capture network traffic, store log messages, and view everything in the on-device console."
 ---
 
-## Get started in three steps
+This guide walks you through the minimal steps to get Pulse working: install the packages, capture `URLSession` traffic, store a log message, and open the console.
 
-Get your documentation site running locally and make your first customization.
+## Install Pulse
 
-### Step 1: Set up your local environment
+Add the Pulse package to your Xcode project via Swift Package Manager using the URL:
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+```
+https://github.com/kean/Pulse
+```
 
-### Step 2: Deploy your changes
+Add the **Pulse** and **PulseUI** libraries to your app target. See [Installation](/installation) for full details, including CocoaPods and binary options.
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+## Capture network traffic
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+<Tabs>
+  <Tab title="URLSessionProxy (recommended)">
+    `URLSessionProxy` is a drop-in wrapper around `URLSession`. Use it in debug builds and fall back to a plain `URLSession` in production.
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+    ```swift
+    import Pulse
 
-### Step 3: Go live
+    #if DEBUG
+    let session: URLSessionProtocol = URLSessionProxy(configuration: .default)
+    #else
+    let session: URLSessionProtocol = URLSession(configuration: .default)
+    #endif
+    ```
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+    Because both `URLSessionProxy` and `URLSession` conform to `URLSessionProtocol`, you can type your networking layer against the protocol and swap the implementation at compile time without any other changes.
+
+    <Tip>
+      `URLSessionProxy` also enables response mocking when connected to Pulse Pro. See the [network logging guide](/network-logging/capturing-requests) for advanced configuration.
+    </Tip>
+  </Tab>
+  <Tab title="PulseProxy (quickest)">
+    **PulseProxy** uses swizzling to capture all network traffic from your app automatically — no changes to your networking code required.
+
+    First, add the **PulseProxy** library to your app target (debug scheme only).
+
+    Then call `enableProxy()` at app startup:
+
+    ```swift
+    import PulseProxy
+
+    #if DEBUG
+    NetworkLogger.enableProxy()
+    #endif
+    ```
+
+    <Warning>
+      PulseProxy uses swizzling and private APIs. Never include it in App Store or production builds. Wrap all usage in `#if DEBUG`.
+    </Warning>
+  </Tab>
+</Tabs>
+
+## Store log messages
+
+Use `LoggerStore.shared` to record messages from anywhere in your app:
+
+```swift
+import Pulse
+
+LoggerStore.shared.storeMessage(
+    label: "auth",
+    level: .debug,
+    message: "Will login user",
+    metadata: ["userId": .string("uid-1")]
+)
+```
+
+<Tip>
+  If your app already uses [SwiftLog](https://github.com/apple/swift-log), you can use Pulse as a log backend via `PersistentLogHandler` from the [PulseLogHandler](https://github.com/kean/PulseLogHandler) package instead.
+</Tip>
+
+## View logs on-device
+
+Add `ConsoleView` from **PulseUI** to your app. The simplest approach is to push it from a debug menu or settings screen:
+
+```swift
+import PulseUI
+
+NavigationLink(destination: ConsoleView()) {
+    Text("Console")
+}
+```
+
+Or present it modally:
+
+```swift
+import PulseUI
+
+.sheet(isPresented: $isConsolePresented) {
+    ConsoleView()
+}
+```
+
+## Enable remote logging
+
+To stream logs in real time to the [Pulse Pro](https://pulselogger.com) app on macOS or iOS, enable automatic connection at app startup:
+
+```swift
+import Pulse
+
+#if DEBUG
+RemoteLogger.shared.isAutomaticConnectionEnabled = true
+#endif
+```
+
+You also need to add two entries to your app's `Info.plist` to allow local network access:
+
+```xml
+<key>NSLocalNetworkUsageDescription</key>
+<string>Network usage required only for development purposes</string>
+<key>NSBonjourServices</key>
+<array>
+  <string>_pulse._tcp</string>
+</array>
+```
+
+<Note>
+  Pulse will not show any network permission prompts until remote logging is actually enabled. The `Info.plist` entries are required by the OS but the user is only prompted when the feature is used.
+</Note>
+
+Once connected, open Pulse Pro and select your device in the sidebar. The connection will be re-established automatically on subsequent launches.
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Network logging" icon="network-wired" href="/network-logging/capturing-requests">
+    Capture traffic from Alamofire, Get, and other URLSession-based frameworks. Configure filtering, redaction, and decoding error display.
+  </Card>
+  <Card title="Console UI" icon="terminal" href="/console/integrating-console">
+    Customize the console, add it to a debug menu, and configure what your QA team can see.
+  </Card>
+  <Card title="Remote logging" icon="wifi" href="/console/remote-logging">
+    Stream logs in real time and use response mocking with Pulse Pro.
+  </Card>
+  <Card title="Logger store" icon="database" href="/advanced/logger-store">
+    Configure store size limits, export logs, and access the underlying Core Data entities.
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

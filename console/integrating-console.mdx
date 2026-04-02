@@ -1,0 +1,162 @@
+---
+title: "Integrating the Console"
+description: "Add a full-featured log inspector to your app with PulseUI's ConsoleView."
+---
+
+## Overview
+
+`PulseUI` provides `ConsoleView` — a full-featured SwiftUI log inspector you can embed directly in your app. It displays both log messages and network requests in a unified list, with built-in support for filtering by log level, full-text search, session picker, and one-tap sharing.
+
+<Note>
+`ConsoleView` requires **iOS 16** or later, **tvOS 16** or later, and **watchOS 9** or later. The macOS console was removed in Pulse 5.0 — use the standalone [Pulse Pro app](https://pulselogger.com) on macOS instead.
+</Note>
+
+## Adding ConsoleView to Your App
+
+### SwiftUI
+
+<Tabs>
+  <Tab title="Navigation Stack (push)">
+    Push `ConsoleView` onto an existing navigation stack using a `NavigationLink`:
+
+    ```swift
+    import PulseUI
+
+    NavigationLink(destination: ConsoleView()) {
+        Text("Console")
+    }
+    ```
+  </Tab>
+  <Tab title="Sheet (modal)">
+    Present `ConsoleView` as a modal sheet. Wrap it in a `NavigationView` so the toolbar items render correctly:
+
+    ```swift
+    import PulseUI
+
+    Text("Open Console")
+        .sheet(isPresented: $isConsolePresented) {
+            NavigationView {
+                ConsoleView()
+            }
+        }
+    ```
+
+    When presented modally, `ConsoleView` shows a **Close** button automatically. You can hide it if you manage dismissal yourself:
+
+    ```swift
+    ConsoleView()
+        .closeButtonHidden(true)
+    ```
+  </Tab>
+</Tabs>
+
+### UIKit
+
+To present the console from a UIKit view controller, use `UIHostingController`:
+
+```swift
+import PulseUI
+import SwiftUI
+
+// Option A — use the convenience MainViewController wrapper
+let consoleVC = MainViewController()
+present(consoleVC, animated: true)
+```
+
+```swift
+// Option B — wrap ConsoleView in UIHostingController manually
+let view = NavigationView {
+    ConsoleView()
+}
+present(UIHostingController(rootView: view), animated: true)
+```
+
+If your app uses a non-translucent navigation bar (i.e. `isTranslucent = false`), set `extendedLayoutIncludesOpaqueBars` to avoid layout issues:
+
+```swift
+let vc = UIHostingController(rootView: ConsoleView())
+vc.extendedLayoutIncludesOpaqueBars = true
+let nav = UINavigationController(rootViewController: vc)
+nav.navigationBar.prefersLargeTitles = true
+present(nav, animated: true)
+```
+
+## Using a Custom Store
+
+By default, `ConsoleView` uses `LoggerStore.shared`. Pass any store instance to display logs from a different source:
+
+```swift
+ConsoleView(store: myStore)
+```
+
+## Network-Only Mode
+
+If your app only captures network requests and not text messages, switch the console to network mode for a focused view:
+
+```swift
+ConsoleView(mode: .network)
+```
+
+## Platform Notes
+
+<Tabs>
+  <Tab title="watchOS">
+    On watchOS, `ConsoleView` renders a simplified list interface with compact toolbar buttons for toggling network-only mode and filtering by errors. A gear button opens settings.
+
+    ```swift
+    // watchOS — same API, simplified UI
+    ConsoleView(store: .shared)
+    ```
+  </Tab>
+  <Tab title="tvOS">
+    On tvOS, `ConsoleView` uses a split layout — the log list occupies the leading panel while quick filters and settings appear in a trailing panel.
+
+    ```swift
+    // tvOS — same API, split-panel UI
+    ConsoleView(store: .shared)
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+macOS console support was **removed in Pulse 5.0**. To inspect logs on macOS, use the standalone [Pulse Pro app](https://pulselogger.com), which connects to your running app over the local network via Remote Logging.
+</Note>
+
+## Opening via Shake Gesture or Debug Menu
+
+A common pattern is to open the console via a shake gesture or an in-app debug menu so it doesn't clutter your production UI:
+
+```swift
+// AppDelegate or SceneDelegate
+#if DEBUG
+override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+    guard motion == .motionShake else { return }
+    let console = UIHostingController(rootView: NavigationView { ConsoleView() })
+    UIApplication.shared.topMostViewController?.present(console, animated: true)
+}
+#endif
+```
+
+<Tip>
+Wrap any `ConsoleView` integration in `#if DEBUG` so that PulseUI is never included in App Store builds.
+</Tip>
+
+## What's in the Console
+
+`ConsoleView` gives you a fully-featured debugging UI out of the box:
+
+- **Unified list** of log messages and network requests, sortable and searchable
+- **Filter by log level** — debug, info, notice, warning, error, critical
+- **Full-text search** across message text, URLs, and response bodies
+- **Session picker** to scope the view to the current or a previous session
+- **Share button** to export logs as a `.pulse` archive, HAR file, or plain text
+- **Settings screen** to configure remote logging and inspect store details
+
+<CardGroup cols={2}>
+  <Card title="Remote Logging" icon="wifi" href="/console/remote-logging">
+    Stream logs in real time to the Pulse Pro macOS app.
+  </Card>
+  <Card title="Sharing Logs" icon="share" href="/console/sharing-logs">
+    Export logs as .pulse archives, HAR files, or plain text.
+  </Card>
+</CardGroup>

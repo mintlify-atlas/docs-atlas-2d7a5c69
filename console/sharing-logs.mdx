@@ -1,0 +1,186 @@
+---
+title: "Sharing Logs"
+description: "Export and share logs from your app as .pulse archives, HAR files, or plain text."
+---
+
+## Overview
+
+PulseUI includes a built-in sharing UI that lets users export logs without any additional code. For programmatic control, `LoggerStore` exposes an `export(to:options:)` async method you can call from anywhere.
+
+Supported export formats:
+
+| Format | Extension | Use case |
+|---|---|---|
+| Pulse archive | `.pulse` | Open in [Pulse Pro](https://pulselogger.com) for full inspection |
+| HAR | `.har` | Share with backend teams; import into Charles, Proxyman, etc. |
+| Plain text | `.txt` | Copy into bug reports or email |
+| HTML | `.html` | Readable in any browser |
+
+<Note>
+PDF export is also available and was fixed in Pulse 5.0 to render correctly in dark mode.
+</Note>
+
+## Built-In Share Button
+
+`ConsoleView` includes a **share button** (↑) in the navigation bar. Tapping it opens the `ShareStoreView` sheet, which lets the user:
+
+- Choose which **sessions** to include.
+- Filter by **log level**.
+- Pick the **output format** (`.pulse`, HAR, plain text, HTML).
+
+No additional code is required — the share button is present by default.
+
+## Programmatic Export
+
+Use `LoggerStore.export(to:options:)` to export from code. The method is `async` and writes a `.pulse` archive to the URL you provide:
+
+```swift
+import Pulse
+
+let store = LoggerStore.shared
+let outputURL = FileManager.default
+    .temporaryDirectory
+    .appendingPathComponent("logs-\(Date()).pulse")
+
+try await store.export(to: outputURL)
+
+// Present a share sheet
+let activityVC = UIActivityViewController(
+    activityItems: [outputURL],
+    applicationActivities: nil
+)
+present(activityVC, animated: true)
+```
+
+<Tip>
+The `.pulse` archive can be opened directly in the [Pulse Pro](https://pulselogger.com) app on macOS and iOS for full-featured inspection, including network response bodies and decoded JSON.
+</Tip>
+
+## Filtering Exports with ExportOptions
+
+`LoggerStore.ExportOptions` lets you limit what gets included in an export. This is useful for exporting only the logs from the current session or restricting by severity.
+
+```swift
+import Pulse
+
+// Export only the current session
+let options = LoggerStore.ExportOptions(
+    sessions: [LoggerStore.shared.session.id]
+)
+try await store.export(to: outputURL, options: options)
+```
+
+```swift
+// Export only errors and critical messages
+let errorPredicate = NSPredicate(format: "level IN %@", [
+    LoggerStore.Level.error.rawValue,
+    LoggerStore.Level.critical.rawValue
+])
+
+let options = LoggerStore.ExportOptions(
+    predicate: errorPredicate
+)
+try await store.export(to: outputURL, options: options)
+```
+
+```swift
+// Combine: specific sessions AND a level filter
+let options = LoggerStore.ExportOptions(
+    predicate: NSPredicate(format: "level >= %d", LoggerStore.Level.warning.rawValue),
+    sessions: [sessionID1, sessionID2]
+)
+try await store.export(to: outputURL, options: options)
+```
+
+## HAR Export
+
+HAR (HTTP Archive) is a standard JSON format understood by many HTTP debugging tools. Share it with backend engineers or import it into:
+
+- Chrome DevTools Network tab
+- Charles Proxy
+- Proxyman
+- Postman
+
+HAR export is available through the built-in share sheet in `ConsoleView`. Select **HAR** as the output format when prompted. Programmatic HAR export is not part of the public API — use the share sheet or `ConsoleView`'s share button.
+
+## Storing Custom Log Metadata
+
+Attach structured metadata to log messages using `LoggerStore.storeMessage(label:level:message:metadata:)`. This metadata is preserved in exports and visible in Pulse Pro:
+
+```swift
+LoggerStore.shared.storeMessage(
+    label: "auth",
+    level: .debug,
+    message: "User login attempt",
+    metadata: [
+        "userId": .string("uid-1"),
+        "method": .string("oauth2"),
+        "attempt": .stringConvertible(1)
+    ]
+)
+```
+
+## Accessing Logs for Custom Views
+
+`LoggerStore` uses Core Data, giving you full access to the underlying entities for custom views or analytics dashboards:
+
+```swift
+import Pulse
+import CoreData
+import SwiftUI
+
+struct AnalyticsLogsView: View {
+    @FetchRequest(
+        sortDescriptors: [
+            NSSortDescriptor(keyPath: \LoggerMessageEntity.createdAt, ascending: true)
+        ],
+        predicate: NSPredicate(format: "label == %@", "analytics")
+    ) var messages: FetchedResults<LoggerMessageEntity>
+
+    var body: some View {
+        List(messages, id: \.objectID) { message in
+            VStack(alignment: .leading) {
+                Text(message.text)
+                Text(message.createdAt, style: .time)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+```
+
+For network tasks, fetch `NetworkTaskEntity` directly:
+
+```swift
+@FetchRequest(
+    sortDescriptors: [
+        NSSortDescriptor(keyPath: \NetworkTaskEntity.createdAt, ascending: false)
+    ],
+    predicate: NSPredicate(format: "requestState == %d", NetworkTaskEntity.State.success.rawValue)
+) var successfulTasks: FetchedResults<NetworkTaskEntity>
+```
+
+<Note>
+In the current schema, every `NetworkTaskEntity` has an associated `LoggerMessageEntity`. This relationship may change in a future release.
+</Note>
+
+## Configuring Allowed Share Formats
+
+You can restrict which output formats appear in `ShareStoreView` via `UserSettings`:
+
+```swift
+import PulseUI
+
+// Allow only .pulse and HAR in the share sheet
+UserSettings.shared.allowedShareStoreOutputs = [.store, .har]
+```
+
+<CardGroup cols={2}>
+  <Card title="Integrating the Console" icon="rectangle-terminal" href="/console/integrating-console">
+    Add ConsoleView to display logs inside your app.
+  </Card>
+  <Card title="Remote Logging" icon="wifi" href="/console/remote-logging">
+    Stream logs in real time to the Pulse Pro macOS app.
+  </Card>
+</CardGroup>

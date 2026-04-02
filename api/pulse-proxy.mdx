@@ -1,0 +1,126 @@
+---
+title: "PulseProxy"
+description: "Automatically captures all URLSession network traffic via method swizzling — for debug builds only."
+---
+
+## Overview
+
+`PulseProxy` is a separate Swift package target that provides one-line global network capture. Add it to your debug target and call `NetworkLogger.enableProxy()` at app launch to start logging every `URLSession` request in your app — including those made by third-party SDKs — without changing any other code.
+
+```swift
+import PulseProxy
+
+NetworkLogger.enableProxy()
+```
+
+**Module:** `PulseProxy`
+
+<Warning>
+  `PulseProxy` relies on **method swizzling** and accesses private Objective-C runtime selectors inside `URLSession`. It is **not suitable for production** and is not guaranteed to work with future OS updates. Use it exclusively in debug builds, guarded by `#if DEBUG`.
+</Warning>
+
+## API
+
+### `NetworkLogger.enableProxy()`
+
+```swift
+extension NetworkLogger {
+    public static func enableProxy(logger: NetworkLogger? = nil)
+}
+```
+
+Enables automatic logging and remote debugging of all network requests made through `URLSession`.
+
+<ParamField body="logger" type="NetworkLogger?" default="nil">
+  The logger to use for recording requests. If `nil`, `NetworkLogger.shared` is used.
+</ParamField>
+
+This method is safe to call only once. Calling it a second time logs an error and has no further effect.
+
+## Import
+
+```swift
+import PulseProxy
+```
+
+Add `PulseProxy` as a dependency to your **debug** target only. It is a separate target from `Pulse` and must be imported explicitly.
+
+## Usage
+
+Always gate the call behind `#if DEBUG` to ensure the swizzling code is never compiled into release builds:
+
+```swift
+import SwiftUI
+import PulseProxy
+
+@main
+struct MyApp: App {
+    init() {
+        #if DEBUG
+        NetworkLogger.enableProxy()
+        #endif
+    }
+
+    var body: some Scene {
+        WindowGroup {
+            ContentView()
+        }
+    }
+}
+```
+
+For UIKit apps, place the call in `application(_:didFinishLaunchingWithOptions:)`:
+
+```swift
+import UIKit
+import PulseProxy
+
+@UIApplicationMain
+class AppDelegate: UIResponder, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
+    ) -> Bool {
+        #if DEBUG
+        NetworkLogger.enableProxy()
+        #endif
+        return true
+    }
+}
+```
+
+## How It Works
+
+`PulseProxy` uses three swizzle points on the Objective-C runtime to intercept URLSession traffic:
+
+1. **`URLSessionTask.resume`** — swizzled on both `URLSessionTask` and the private `__NSCFURLSessionTask` class. When a task is resumed, `NetworkLogger.logTaskCreated(_:)` is called to register it.
+
+2. **`_didReceiveData:`** — swizzled on the private `__NSCFURLLocalSessionConnection` class. Forwards received data chunks to `NetworkLogger.logDataTask(_:didReceive:)`.
+
+3. **`_didFinishWithError:`** — swizzled on `__NSCFURLLocalSessionConnection`. After the original implementation runs, extracts `URLSessionTaskMetrics` from the task and calls both `logTask(_:didFinishCollecting:)` and `logTask(_:didCompleteWithError:)`.
+
+Because the swizzling targets private classes and internal selectors, this approach may break with OS updates.
+
+## Comparison to URLSessionProxy
+
+| | `PulseProxy` | `URLSessionProxy` |
+|---|---|---|
+| Setup effort | One line | Per-session initialization |
+| Covers third-party SDKs | Yes | No (only sessions you create) |
+| Works with async/await | Yes | Yes |
+| Production safe | No | Yes |
+| Stability guarantee | None | Stable public API |
+| Recommended for | Debug builds only | Production + debug |
+
+<Tip>
+  For most production apps, `URLSessionProxy` or `URLSessionProxyDelegate` is the right long-term choice. Use `PulseProxy` during early prototyping or when you need to capture traffic from code you don't control.
+</Tip>
+
+<CardGroup cols={2}>
+  <Card title="URLSessionProxy" href="/api/url-session-proxy">
+    Production-safe drop-in replacement for URLSession
+  </Card>
+  <Card title="URLSessionProxyDelegate" href="/api/url-session-proxy-delegate">
+    Delegate-based integration for existing sessions
+  </Card>
+</CardGroup>

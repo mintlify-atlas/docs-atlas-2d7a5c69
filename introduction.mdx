@@ -1,0 +1,60 @@
+---
+title: "Introduction"
+description: "Pulse is a logging and network debugging SDK for Apple platforms. Record, inspect, and share logs and URLSession traffic directly from your app."
+---
+
+Pulse is a powerful logging and network debugging SDK for Apple platforms. It lets you capture `URLSession` network requests, store log messages on-device, inspect everything in a built-in SwiftUI console, and stream logs in real time to the [Pulse Pro](https://pulselogger.com) app on macOS or iOS.
+
+<Note>
+  Pulse is **not** a network proxy. It captures traffic from within your app by wrapping `URLSession`. If you need a proxy-based tool, see [Proxyman](https://proxyman.io).
+</Note>
+
+## Modules
+
+Pulse ships three independent Swift packages that you add to your app as needed.
+
+| Module | Description |
+|---|---|
+| **Pulse** | Core storage and logging. Captures network requests, stores log messages in a Core Data database, and manages the connection to Pulse Pro. Required. |
+| **PulseUI** | SwiftUI views — primarily `ConsoleView` — for inspecting logs directly on-device. Add this to your debug builds. |
+| **PulseProxy** | Automatic network capture via swizzling and private APIs. The fastest way to try Pulse. **Debug builds only.** |
+
+## Key use cases
+
+- **On-device log inspection** — embed `ConsoleView` into your app and let your QA team browse logs and network traffic without connecting to Xcode.
+- **URLSession traffic capture** — wrap `URLSession` with `URLSessionProxy`, or use `PulseProxy` for zero-configuration capture.
+- **Remote debugging** — stream logs in real time to the [Pulse Pro](https://pulselogger.com) app on macOS or iOS. Supports response mocking.
+- **Log sharing** — export the `.pulse` store file and attach it to bug reports.
+
+## Supported platforms
+
+| Platform | Pulse (core) | PulseUI (ConsoleView) |
+|---|---|---|
+| iOS | 15.0+ | **16.0+** |
+| tvOS | 15.0+ | 16.0+ |
+| macOS | 13.0+ | — (removed in Pulse 5.0) |
+| watchOS | 9.0+ | 9.0+ (simplified UI) |
+| visionOS | 1.0+ | 1.0+ |
+
+Pulse 5.x requires **Swift 5.10** and **Xcode 15.4** or later.
+
+<Note>
+  The `Pulse` core module targets iOS 15+, but `ConsoleView` in `PulseUI` requires iOS 16. On iOS 15, `ConsoleView` renders a placeholder message. For iOS 15 logging without the UI, use `LoggerStore` directly or remote logging via Pulse Pro.
+</Note>
+
+## Where to go next
+
+<CardGroup cols={2}>
+  <Card title="Quick start" icon="bolt" href="/quickstart">
+    Get a working integration in minutes — install, capture network traffic, and view logs on-device.
+  </Card>
+  <Card title="Installation" icon="package" href="/installation">
+    Add Pulse via Swift Package Manager, CocoaPods, or precompiled binaries.
+  </Card>
+  <Card title="Network logging" icon="network-wired" href="/network-logging/capturing-requests">
+    Learn all the ways to capture URLSession traffic and customize what gets recorded.
+  </Card>
+  <Card title="Pulse Pro" icon="display" href="https://pulselogger.com">
+    The companion macOS and iOS app for real-time log streaming and response mocking.
+  </Card>
+</CardGroup>

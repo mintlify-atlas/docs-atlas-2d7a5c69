@@ -1,0 +1,178 @@
+---
+title: 'Capturing network requests'
+description: 'Learn how to integrate Pulse with URLSession to capture network traffic in your app.'
+keywords: ['network logging', 'URLSession', 'URLSessionProxy', 'PulseProxy', 'swizzling']
+---
+
+## Overview
+
+Pulse works at the `URLSession` level and needs access to its callbacks to capture network requests, responses, and metrics. The framework is modular and provides four integration options to accommodate almost any architecture.
+
+<Tabs>
+  <Tab title="URLSessionProxy (recommended)">
+
+## URLSessionProxy
+
+`URLSessionProxy` is a thin wrapper on top of `URLSession` that intercepts all delegate callbacks automatically. It is the recommended integration method because it:
+
+- Supports all `URLSession` APIs including async/await, Combine, and completion-handler variants
+- Automatically enables response mocking when used with Pulse Pro
+- Can be swapped out for a real `URLSession` in production builds with a single line change
+
+### Basic setup
+
+Initialize `URLSessionProxy` with a `URLSessionConfiguration`, just as you would with `URLSession`:
+
+```swift
+import Pulse
+
+#if DEBUG
+let session: URLSessionProtocol = URLSessionProxy(configuration: .default)
+#else
+let session: URLSessionProtocol = URLSession(configuration: .default)
+#endif
+```
+
+`URLSessionProxy` conforms to `URLSessionProtocol`, so replacing it with a plain `URLSession` in non-debug builds requires no other changes.
+
+### Setup with a delegate
+
+If your session requires a delegate, pass it to the initializer. `URLSessionProxy` wraps the delegate internally with `URLSessionProxyDelegate` and forwards all callbacks correctly:
+
+```swift
+import Pulse
+
+let proxy = URLSessionProxy(
+    configuration: .default,
+    delegate: mySessionDelegate,
+    delegateQueue: nil
+)
+```
+
+<Tip>
+Response mocking is enabled by default via `URLSessionProxy.Options.isMockingEnabled`. To disable it, pass a custom `Options` instance with `isMockingEnabled` set to `false`.
+</Tip>
+
+  </Tab>
+  <Tab title="PulseProxy (quickest)">
+
+## PulseProxy
+
+If you are evaluating Pulse and want traffic captured immediately without any architectural changes, use `NetworkLogger.enableProxy()` from the **PulseProxy** module.
+
+```swift
+import PulseProxy
+
+#if DEBUG
+NetworkLogger.enableProxy()
+#endif
+```
+
+Call this once at app launch, before any network requests are made.
+
+<Warning>
+**PulseProxy relies on method swizzling and private APIs.** It intercepts `URLSession` at the Objective-C runtime level using internal class names that may change in future OS versions. Do not include PulseProxy in production builds. It is intended only for local evaluation and debugging.
+</Warning>
+
+A custom logger can be provided if you have configured a non-shared instance:
+
+```swift
+NetworkLogger.enableProxy(logger: myNetworkLogger)
+```
+
+  </Tab>
+  <Tab title="URLSessionProxyDelegate">
+
+## URLSessionProxyDelegate
+
+If your app uses a delegate-based `URLSession` that you do not create directly — for example, one managed by a networking library like [Alamofire](https://github.com/Alamofire/Alamofire) — you can insert `URLSessionProxyDelegate` into the delegate chain.
+
+```swift
+import Pulse
+
+let delegate = URLSessionProxyDelegate(delegate: yourExistingDelegate)
+let session = URLSession(
+    configuration: .default,
+    delegate: delegate,
+    delegateQueue: nil
+)
+```
+
+`URLSessionProxyDelegate` wraps the existing delegate, intercepts the relevant callbacks for logging, and forwards everything else to the original delegate transparently.
+
+<Warning>
+`URLSessionProxyDelegate` supports a limited subset of scenarios. It does not work with `URLSession` async/await APIs. For full coverage including Swift Concurrency, use `URLSessionProxy` instead.
+</Warning>
+
+### Automatic registration (soft-deprecated)
+
+In earlier versions of Pulse, `URLSessionProxyDelegate.enableAutomaticRegistration()` was available to swizzle the `URLSession` initializer so every delegate-based session would automatically use a proxy delegate. This method still works but is soft-deprecated in Pulse 5.0. Prefer one of the explicit approaches above.
+
+  </Tab>
+  <Tab title="NetworkLogger (manual)">
+
+## NetworkLogger directly
+
+If none of the convenience wrappers fit your setup, you can call `NetworkLogger` directly. This is useful when integrating with networking libraries that expose their own instrumentation hooks.
+
+### Alamofire EventMonitor example
+
+Alamofire's `EventMonitor` protocol maps almost directly onto `NetworkLogger`'s API:
+
+```swift
+import Alamofire
+import Pulse
+
+let session = Alamofire.Session(eventMonitors: [NetworkLoggerEventMonitor()])
+
+struct NetworkLoggerEventMonitor: EventMonitor {
+    let logger: NetworkLogger = .shared
+
+    func request(_ request: Request, didCreateTask task: URLSessionTask) {
+        logger.logTaskCreated(task)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        dataTask: URLSessionDataTask,
+        didReceive data: Data
+    ) {
+        logger.logDataTask(dataTask, didReceive: data)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didFinishCollecting metrics: URLSessionTaskMetrics
+    ) {
+        logger.logTask(task, didFinishCollecting: metrics)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didCompleteWithError error: Error?
+    ) {
+        logger.logTask(task, didCompleteWithError: error)
+    }
+}
+```
+
+### Storing requests directly
+
+If you do not have access to a `URLSessionTask` — for example, when working with a custom HTTP client — you can store a completed request/response pair directly in `LoggerStore`:
+
+```swift
+LoggerStore.shared.storeRequest(
+    urlRequest,
+    response: urlResponse,
+    error: nil,
+    data: responseData,
+    metrics: taskMetrics   // optional
+)
+```
+
+This creates a single completed network event in the store without any incremental updates.
+
+  </Tab>
+</Tabs>

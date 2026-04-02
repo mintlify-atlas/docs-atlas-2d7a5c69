@@ -1,0 +1,128 @@
+---
+title: "URLSessionProxyDelegate"
+description: "Automates URLSession request tracking by intercepting delegate callbacks."
+---
+
+## Overview
+
+`URLSessionProxyDelegate` is a `URLSessionDelegate` that sits in front of your existing delegate and intercepts the network-related callbacks that Pulse needs to record requests. It belongs to the `Pulse` module.
+
+This is the right integration point when you already have a `URLSession` configured with a custom delegate — for example, when using Alamofire, Moya, or another networking library that manages its own session internally.
+
+## Declaration
+
+```swift
+public final class URLSessionProxyDelegate: NSObject,
+    URLSessionTaskDelegate,
+    URLSessionDataDelegate,
+    URLSessionDownloadDelegate
+```
+
+**Module:** `Pulse`
+
+## Initializer
+
+```swift
+public init(logger: NetworkLogger? = nil, delegate: URLSessionDelegate? = nil)
+```
+
+<ParamField body="logger" type="NetworkLogger?" default="nil">
+  The logger to use for recording requests. If `nil`, `NetworkLogger.shared` is used.
+</ParamField>
+
+<ParamField body="delegate" type="URLSessionDelegate?" default="nil">
+  The "actual" session delegate. `URLSessionProxyDelegate` holds a strong reference to it and forwards all non-intercepted selectors via the Objective-C message forwarding mechanism.
+</ParamField>
+
+## When to Use
+
+Use `URLSessionProxyDelegate` when:
+
+- You are configuring `URLSession` directly with a custom `URLSessionDelegate`
+- You are using a networking library (Alamofire, etc.) that vends a pre-configured session whose delegate you can replace
+- You want logging without the overhead of `URLSessionProxy`'s full task wrapping
+
+<Note>
+  `URLSessionProxyDelegate` **does not** intercept async/await convenience APIs such as `URLSession.data(for:)`. Those APIs bypass the delegate entirely. Use `URLSessionProxy` if you need async/await coverage.
+</Note>
+
+## How It Works
+
+The delegate acts as a transparent proxy. It intercepts a fixed set of delegate selectors that Pulse requires for accurate logging:
+
+- `urlSession(_:dataTask:didReceive:)` — records received response body data
+- `urlSession(_:task:didCompleteWithError:)` — marks the task as finished
+- `urlSession(_:task:didFinishCollecting:)` — captures `URLSessionTaskMetrics`
+- `urlSession(_:task:didSendBodyData:totalBytesSent:totalBytesExpectedToSend:)` — tracks upload progress
+- `urlSession(_:downloadTask:didFinishDownloadingTo:)` — captures download completion
+- `urlSession(_:downloadTask:didWriteData:totalBytesWritten:totalBytesExpectedToWrite:)` — tracks download progress
+
+For every other selector, the proxy delegate forwards the message transparently to your existing delegate via `forwardingTarget(for:)` — your delegate sees the same callbacks it would without Pulse.
+
+### iOS 16+ / macOS 13+ Task Creation Tracking
+
+On iOS 16, tvOS 16, macOS 13, and watchOS 9 or later, the delegate automatically intercepts `urlSession(_:didCreateTask:)`, which fires immediately when a task is created. This allows Pulse to begin tracking the request before the first byte is sent.
+
+On earlier OS versions, task creation is not tracked automatically. You can opt in manually:
+
+```swift
+let task = session.dataTask(with: request)
+NetworkLogger.shared.logTaskCreated(task)
+task.resume()
+```
+
+## Automatic Registration
+
+`URLSessionProxyDelegate` also provides a class-level method that swizzles `URLSession.init(configuration:delegate:delegateQueue:)` to automatically inject the proxy delegate into every new session:
+
+```swift
+URLSessionProxyDelegate.enableAutomaticRegistration()
+```
+
+<Warning>
+  `enableAutomaticRegistration()` is **soft-deprecated in Pulse 5.0**. For global automatic capture, prefer `NetworkLogger.enableProxy()` from the `PulseProxy` module. For explicit integration, use `URLSessionProxy` or wrap the delegate manually as shown below.
+</Warning>
+
+## Usage Example
+
+Wrap your existing delegate when creating the session:
+
+```swift
+import Foundation
+import Pulse
+
+class MySessionDelegate: NSObject, URLSessionDataDelegate {
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        // your existing handling
+    }
+}
+
+let myDelegate = MySessionDelegate()
+
+// Wrap it in URLSessionProxyDelegate
+let delegate = URLSessionProxyDelegate(logger: nil, delegate: myDelegate)
+
+let session = URLSession(
+    configuration: .default,
+    delegate: delegate,
+    delegateQueue: nil
+)
+```
+
+All callbacks your code relies on continue to work. Pulse's logging happens transparently alongside them.
+
+### Using a Custom Logger
+
+```swift
+let logger = NetworkLogger()
+let delegate = URLSessionProxyDelegate(logger: logger, delegate: existingDelegate)
+```
+
+<CardGroup cols={2}>
+  <Card title="URLSessionProxy" href="/api/url-session-proxy">
+    Full-featured drop-in replacement for URLSession
+  </Card>
+  <Card title="PulseProxy" href="/api/pulse-proxy">
+    Zero-setup global capture via method swizzling
+  </Card>
+</CardGroup>

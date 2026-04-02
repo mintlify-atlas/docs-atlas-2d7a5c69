@@ -1,0 +1,160 @@
+---
+title: "Response Mocking"
+description: "Intercept and mock network responses at runtime using Pulse Pro."
+---
+
+Pulse supports mocking network responses for debugging and testing without modifying your app's networking code. Mock rules are configured in [Pulse Pro](https://pulselogger.com) and applied in real time while your app is connected to it.
+
+<Warning>
+Mocking requires an active connection to Pulse Pro. Always wrap mocking setup in `#if DEBUG` guards to prevent it from shipping in production builds.
+</Warning>
+
+---
+
+## How It Works
+
+`MockingURLProtocol` is a custom `URLProtocol` subclass that intercepts outgoing requests. When a request matches a rule configured in Pulse Pro, `MockingURLProtocol` returns the mocked response directly — the real server is never contacted.
+
+The protocol only activates when:
+
+1. `RemoteLogger` is connected to Pulse Pro.
+2. The request URL matches at least one mock rule (regex pattern).
+
+Requests that do not match any rule pass through to the real network stack unchanged.
+
+---
+
+## Enabling Mocking
+
+There are three ways to register `MockingURLProtocol`, depending on how your app manages `URLSession` instances.
+
+<Tabs>
+  <Tab title="URLSessionProxy (recommended)">
+    `URLSessionProxy` is Pulse's drop-in `URLSession` wrapper. Mocking is enabled by default via the `isMockingEnabled` option.
+
+    ```swift
+    #if DEBUG
+    import Pulse
+
+    let session = URLSessionProxy(
+        configuration: .default,
+        options: URLSessionProxy.Options() // isMockingEnabled = true by default
+    )
+    #endif
+    ```
+
+    To opt out of mocking while still using `URLSessionProxy`:
+
+    ```swift
+    var options = URLSessionProxy.Options()
+    options.isMockingEnabled = false
+
+    let session = URLSessionProxy(configuration: .default, options: options)
+    ```
+  </Tab>
+  <Tab title="Manual registration">
+    Manually prepend `MockingURLProtocol` to an existing `URLSessionConfiguration` before creating your session.
+
+    ```swift
+    #if DEBUG
+    import Pulse
+
+    let configuration = URLSessionConfiguration.default
+    configuration.protocolClasses = [MockingURLProtocol.self]
+        + (configuration.protocolClasses ?? [])
+
+    let session = URLSession(configuration: configuration)
+    #endif
+    ```
+  </Tab>
+  <Tab title="Automatic registration">
+    `MockingURLProtocol.enableAutomaticRegistration()` uses method swizzling to inject `MockingURLProtocol` into every `URLSession` instance created by the app, including sessions from third-party frameworks.
+
+    ```swift
+    #if DEBUG
+    import Pulse
+
+    @main
+    struct MyApp: App {
+        init() {
+            MockingURLProtocol.enableAutomaticRegistration()
+        }
+
+        var body: some Scene {
+            WindowGroup { ContentView() }
+        }
+    }
+    #endif
+    ```
+
+    <Note>
+    `enableAutomaticRegistration()` must be called on the main actor before any `URLSession` is created. It swizzles `URLSession.init(configuration:delegate:delegateQueue:)`.
+    </Note>
+  </Tab>
+</Tabs>
+
+---
+
+## Configuring Mock Rules in Pulse Pro
+
+<Steps>
+  <Step title="Connect your device">
+    Launch your app with mocking enabled and open [Pulse Pro](https://pulselogger.com). Select your device from the device list.
+  </Step>
+  <Step title="Open the Mocking panel">
+    In Pulse Pro, navigate to the **Mocking** tab for the connected device.
+  </Step>
+  <Step title="Add a mock rule">
+    Create a new rule and configure:
+    - **Pattern** — a regex that matches the URL(s) to mock (e.g. `https://api\.example\.com/users/.*`).
+    - **Method** — optionally restrict to a specific HTTP method (`GET`, `POST`, etc.).
+    - **Status code** — the HTTP status code to return (default: `200`).
+    - **Headers** — response headers to include.
+    - **Body** — the response body as a UTF-8 string (JSON, XML, plain text, etc.).
+    - **Error code** — alternatively, return a `URLError` by code instead of an HTTP response.
+    - **Skip** — skip the first N matching requests before mocking kicks in.
+    - **Count** — mock only N requests, then let subsequent requests through.
+  </Step>
+  <Step title="Enable the rule">
+    Toggle the rule on. From this point, matching requests from your app receive the mocked response immediately.
+  </Step>
+</Steps>
+
+---
+
+## Mocked Requests in the Console
+
+Requests served by `MockingURLProtocol` are tagged in `LoggerStore`. The `NetworkTaskEntity.isMocked` property is `true` for any mocked request, and the Pulse console displays a visual indicator so you can distinguish mocked traffic from real traffic at a glance.
+
+```swift
+// Fetch only mocked requests
+let mockedTasks = try LoggerStore.shared.tasks(
+    predicate: NSPredicate(format: "isMocked == YES")
+)
+```
+
+---
+
+## Security Considerations
+
+<CardGroup cols={2}>
+  <Card title="Use #if DEBUG guards" icon="shield">
+    Never include `MockingURLProtocol` registration or `enableAutomaticRegistration()` calls in release builds. Wrap all mocking setup in `#if DEBUG` preprocessor blocks.
+  </Card>
+  <Card title="Requires Pulse Pro connection" icon="link">
+    Mocking is inert without an active Pulse Pro connection. `MockingURLProtocol.canInit(with:)` returns `false` when `RemoteLogger` is not connected, so real requests are unaffected.
+  </Card>
+</CardGroup>
+
+---
+
+## Resources
+
+<CardGroup cols={2}>
+  <Card title="Pulse Pro" icon="globe" href="https://pulselogger.com">
+    The macOS app used to configure mock rules and view real-time logs.
+  </Card>
+  <Card title="URLSessionProxy" icon="code" href="/advanced/logger-store">
+    The recommended way to integrate Pulse with URLSession, with mocking enabled by default.
+  </Card>
+</CardGroup>

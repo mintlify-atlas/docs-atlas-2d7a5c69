@@ -1,24 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "Pulse",
+  "projectType": "sdk-library",
+  "projectName": "Pulse",
+  "projectDescription": "A powerful network and logging framework for Apple platforms that captures URLSession traffic, stores logs persistently, and provides a built-in SwiftUI console for inspection and remote debugging.",
   "theme": "palm",
-  "colors": {
-    "primary": "#68de4b",
-    "light": "#d7a169",
-    "dark": "#2c302c"
-  },
-  "favicon": "https://media.brand.dev/f9d41890-fc9b-4926-a2ba-a7603feffb13.png",
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/kean/Pulse"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/kean/Pulse"
-    }
-  },
+  "primaryColor": "#68de4b",
+  "lightColor": "#d7a169",
+  "darkColor": "#2c302c",
   "navigation": {
     "tabs": [
       {
@@ -88,5 +75,31 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "Automatic URLSession network request capture via URLSessionProxy or PulseProxy",
+    "Persistent log storage using CoreData with efficient lzfse compression",
+    "Built-in SwiftUI console (ConsoleView) for on-device log inspection",
+    "Real-time remote logging to Pulse Pro macOS/iOS app over local network",
+    "Sensitive data redaction for headers, query items, and JSON fields",
+    "Response mocking for debugging via MockingURLProtocol",
+    "SwiftLog backend integration via PulseLogHandler",
+    "Session-based log organization with export to .pulse format"
+  ],
+  "publicApiSurface": [
+    "LoggerStore",
+    "LoggerStore.Configuration",
+    "LoggerStore.Options",
+    "NetworkLogger",
+    "NetworkLogger.Configuration",
+    "RemoteLogger",
+    "URLSessionProxy",
+    "URLSessionProxyDelegate",
+    "MockingURLProtocol",
+    "NetworkLogger.enableProxy() (PulseProxy)",
+    "ConsoleView (PulseUI)",
+    "LoggerMessageEntity",
+    "NetworkTaskEntity",
+    "LoggerSessionEntity"
+  ]
 }

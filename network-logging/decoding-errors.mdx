@@ -1,0 +1,113 @@
+---
+title: 'Capturing decoding errors'
+description: 'Associate Swift decoding errors with network requests so Pulse can highlight the problematic JSON field.'
+keywords: ['decoding error', 'DecodingError', 'JSON', 'Codable', 'isWaitingForDecoding']
+---
+
+## Overview
+
+A network request is not truly successful until your app has decoded the response into a model. Pulse lets you associate a `DecodingError` (or any `Error`) with the network task that produced the response. When you open that request in the Pulse console, the response body viewer highlights the exact field that caused the failure.
+
+## Setup
+
+<Steps>
+  <Step title="Enable isWaitingForDecoding">
+    Set `isWaitingForDecoding = true` in `NetworkLogger.Configuration`. This tells the logger not to mark the task as completed when the network response arrives; instead it waits for your explicit call.
+
+    ```swift
+    import Pulse
+
+    var configuration = NetworkLogger.Configuration()
+    configuration.isWaitingForDecoding = true
+
+    let logger = NetworkLogger(configuration: configuration)
+    ```
+  </Step>
+
+  <Step title="Create a URLSession with the custom logger">
+    Pass the configured logger to `URLSessionProxy` (or whichever integration method you use):
+
+    ```swift
+    let session = URLSessionProxy(configuration: .default, logger: logger)
+    ```
+  </Step>
+
+  <Step title="Call logTask after decoding">
+    After every decoding attempt, call `logTask(_:didFinishDecodingWithError:)` with the task and the error (or `nil` on success). This is what finalizes the task in the store. Capture the `URLSessionTask` from the `URLSessionProxy`'s underlying session or from your delegate callbacks.
+
+    ```swift
+    // Access the underlying URLSession task from URLSessionProxy
+    let dataTask = session.session.dataTask(with: urlRequest)
+    let data: Data = try await withCheckedThrowingContinuation { continuation in
+        dataTask.resume()
+        // ... collect data via delegate
+    }
+
+    do {
+        let user = try JSONDecoder().decode(User.self, from: data)
+        logger.logTask(dataTask, didFinishDecodingWithError: nil)
+        return user
+    } catch {
+        logger.logTask(dataTask, didFinishDecodingWithError: error)
+        throw error
+    }
+    ```
+  </Step>
+</Steps>
+
+## Full example
+
+The most common way to associate decoding errors is when using `NetworkLogger` directly with an Alamofire `EventMonitor` or a custom delegate that exposes individual `URLSessionTask` references:
+
+```swift
+import Pulse
+import Alamofire
+
+// 1. Configure a logger that waits for decoding.
+let logger = NetworkLogger {
+    $0.isWaitingForDecoding = true
+}
+NetworkLogger.shared = logger
+
+// 2. In your data-loading code, report the decoding result.
+func loadProfile(userID: String) async throws -> UserProfile {
+    let request = AF.request("https://api.example.com/users/\(userID)")
+
+    // Fetch raw data and retain access to the underlying task.
+    let (data, _) = try await request.serializingData().value
+
+    // Log the Alamofire-managed URLSessionTask.
+    let task = request.task!
+
+    do {
+        let profile = try JSONDecoder().decode(UserProfile.self, from: data)
+        logger.logTask(task, didFinishDecodingWithError: nil)
+        return profile
+    } catch {
+        // The error and its coding path are stored with the request in Pulse.
+        logger.logTask(task, didFinishDecodingWithError: error)
+        throw error
+    }
+}
+```
+
+<Note>
+When using `URLSessionProxy` with async/await (`session.data(for:)`), the internal `URLSessionTask` is managed automatically. Decoding error tracking works best with Alamofire's `EventMonitor`, custom `URLSessionDelegate` implementations, or any integration where you retain a reference to the `URLSessionTask`.
+</Note>
+
+<Note>
+If the network request itself fails (non-2xx status code, connection error, etc.), the task is completed immediately regardless of `isWaitingForDecoding`. The waiting behaviour only applies when the network layer succeeds and your app proceeds to decode the response.
+</Note>
+
+## How it works in the console
+
+When a decoding error is recorded, the Pulse console response body viewer parses the `DecodingError` coding path and scrolls to — and highlights — the JSON key or array index that caused the failure. This makes it straightforward to identify whether the server returned an unexpected type, a missing key, or malformed data without manually inspecting raw JSON.
+
+Pulse converts Swift's `DecodingError` into its own `NetworkLogger.DecodingError` type, which is `Codable` and can be persisted alongside the response. The following error cases are captured:
+
+| Swift error | Information stored |
+|---|---|
+| `typeMismatch` | Expected type, coding path |
+| `valueNotFound` | Expected type, coding path |
+| `keyNotFound` | Missing key, coding path |
+| `dataCorrupted` | Debug description, coding path |
